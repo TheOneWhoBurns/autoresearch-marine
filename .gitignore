@@ -1,0 +1,6 @@
+data/
+run.log
+results.tsv
+__pycache__/
+*.pyc
+.DS_Store
