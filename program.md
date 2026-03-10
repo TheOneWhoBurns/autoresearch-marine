@@ -185,8 +185,39 @@ tiers. The loop runs until interrupted.
 15. Active learning loop simulation
 16. Temporal model: segment sequences as context
 
+### Claude-as-annotator (creative cross-tier)
+Claude Opus 4.6 and Sonnet 4.6 have native audio understanding. You can send
+WAV segments directly to the Anthropic API and ask Claude to describe what it
+hears (whale calls, boat noise, shrimp clicks, silence, etc.).
+
+Use this for pseudo-labeling:
+17. Pick representative segments from each cluster (e.g. closest to centroid)
+18. Send them to Claude API with a prompt like: "Describe the underwater sounds
+    in this recording. Identify: biological sounds (species if possible),
+    anthropogenic noise, ambient conditions."
+19. Use Claude's descriptions as pseudo-labels for Tier 3 classifier training
+20. Compare Claude's labels across clusters to validate ecological meaning
+
+To call the API from experiment.py:
+```python
+import anthropic, base64
+client = anthropic.Anthropic()  # uses ANTHROPIC_API_KEY env var
+with open(wav_path, "rb") as f:
+    audio_b64 = base64.standard_b64encode(f.read()).decode("utf-8")
+response = client.messages.create(
+    model="claude-sonnet-4-6",
+    max_tokens=1024,
+    messages=[{"role": "user", "content": [
+        {"type": "media", "source": {"type": "base64", "media_type": "audio/wav", "data": audio_b64}},
+        {"type": "text", "text": "Describe the underwater sounds..."}
+    ]}],
+)
+```
+This is especially powerful for originality points — using an LLM to annotate
+marine bioacoustics data is novel and directly applicable to conservation.
+
 ### Discovery-focused
-17. Day vs night comparison (extract timestamps from filenames)
-18. Per-unit acoustic profiles (do hydrophones hear different things?)
-19. Boat detection (high LOW band + low MID/HIGH)
-20. Biodiversity index per recording
+21. Day vs night comparison (extract timestamps from filenames)
+22. Per-unit acoustic profiles (do hydrophones hear different things?)
+23. Boat detection (high LOW band + low MID/HIGH)
+24. Biodiversity index per recording
