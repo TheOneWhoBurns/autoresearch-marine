@@ -114,6 +114,14 @@ def extract_features(segments):
         if USE_RMS:
             feats.append(compute_rms(seg))
 
+        # NDSI: Normalized Difference Soundscape Index
+        # bio = MID band, anthro = LOW band; NDSI = (bio-anthro)/(bio+anthro)
+        bp_vals = compute_band_power(seg) if not USE_BAND_POWER else bp
+        bio = 10**(bp_vals["mid"]/10)
+        anthro = 10**(bp_vals["low"]/10)
+        ndsi = (bio - anthro) / (bio + anthro + 1e-12)
+        feats.append(ndsi)
+
         # Mel spectrogram summary stats (compressed representation)
         mel = compute_melspec(seg)
         # Per-band statistics across time
