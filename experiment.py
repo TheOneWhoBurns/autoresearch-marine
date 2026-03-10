@@ -114,6 +114,12 @@ def extract_features(segments):
         if USE_RMS:
             feats.append(compute_rms(seg))
 
+        # Mel spectrogram summary stats (compressed representation)
+        mel = compute_melspec(seg)
+        # Per-band statistics across time
+        feats.extend(np.mean(mel, axis=1)[::4])   # subsample every 4th band
+        feats.extend(np.std(mel, axis=1)[::4])
+
         features_list.append(feats)
         if (i + 1) % 100 == 0:
             print(f"  Features: {i+1}/{len(segments)}")
