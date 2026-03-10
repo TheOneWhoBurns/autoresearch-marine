@@ -46,14 +46,14 @@ USE_RMS = True
 
 # Dimensionality reduction
 REDUCER = "umap"        # "umap", "pca", or "none"
-N_COMPONENTS = 15
+N_COMPONENTS = 20
 UMAP_N_NEIGHBORS = 10
 UMAP_MIN_DIST = 0.0
 UMAP_METRIC = "euclidean"
 
 # Clustering
 CLUSTERER = "hdbscan"   # "hdbscan", "kmeans", "spectral", "gmm"
-HDBSCAN_MIN_CLUSTER = 8
+HDBSCAN_MIN_CLUSTER = 10
 HDBSCAN_MIN_SAMPLES = 5
 KMEANS_K = 8
 
