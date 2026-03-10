@@ -37,8 +37,10 @@ TIER = 1  # 1=acoustic indices, 2=pretrained embeddings, 3=custom classifier
 
 # Feature extraction
 N_MFCC = 20
+USE_DELTA_MFCC = True       # delta + delta-delta MFCCs
 USE_BAND_POWER = True
 USE_SPECTRAL = True
+USE_SPECTRAL_CONTRAST = True # spectral contrast (7 bands)
 USE_ZCR = True
 USE_RMS = True
 
@@ -67,11 +69,16 @@ def extract_features(segments):
     for i, seg in enumerate(segments):
         feats = []
 
-        # MFCCs (mean + std)
+        # MFCCs (mean + std) + deltas
         mfcc = librosa.feature.mfcc(y=seg, sr=TARGET_SR, n_mfcc=N_MFCC,
                                      n_fft=N_FFT, hop_length=HOP_LENGTH)
         feats.extend(np.mean(mfcc, axis=1))
         feats.extend(np.std(mfcc, axis=1))
+        if USE_DELTA_MFCC:
+            delta = librosa.feature.delta(mfcc)
+            delta2 = librosa.feature.delta(mfcc, order=2)
+            feats.extend(np.mean(delta, axis=1))
+            feats.extend(np.mean(delta2, axis=1))
 
         # Ecological band powers
         if USE_BAND_POWER:
@@ -89,6 +96,13 @@ def extract_features(segments):
             feats.extend([np.mean(centroid), np.std(centroid),
                           np.mean(bandwidth), np.std(bandwidth),
                           np.mean(rolloff), np.std(rolloff)])
+
+        # Spectral contrast
+        if USE_SPECTRAL_CONTRAST:
+            contrast = librosa.feature.spectral_contrast(y=seg, sr=TARGET_SR,
+                                                          n_fft=N_FFT, hop_length=HOP_LENGTH)
+            feats.extend(np.mean(contrast, axis=1))
+            feats.extend(np.std(contrast, axis=1))
 
         # Zero crossing rate
         if USE_ZCR:
@@ -206,8 +220,10 @@ def main():
 
     config = {
         "tier": TIER,
-        "n_mfcc": N_MFCC, "use_band_power": USE_BAND_POWER,
-        "use_spectral": USE_SPECTRAL, "use_zcr": USE_ZCR, "use_rms": USE_RMS,
+        "n_mfcc": N_MFCC, "use_delta_mfcc": USE_DELTA_MFCC,
+        "use_band_power": USE_BAND_POWER,
+        "use_spectral": USE_SPECTRAL, "use_spectral_contrast": USE_SPECTRAL_CONTRAST,
+        "use_zcr": USE_ZCR, "use_rms": USE_RMS,
         "reducer": REDUCER, "n_components": N_COMPONENTS,
         "umap_n_neighbors": UMAP_N_NEIGHBORS, "umap_min_dist": UMAP_MIN_DIST,
         "clusterer": CLUSTERER,
