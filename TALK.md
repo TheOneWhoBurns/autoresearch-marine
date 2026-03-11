@@ -141,7 +141,11 @@
 - Run experiment, upload results to S3, clean up
 
 **Priority**: Medium — currently running on CPU c5.xlarge (works but 10-20x slower)
-**Status**: ACKNOWLEDGED queue position #3. CPU experiment running at 3.237.202.26. Will use GPU slot if CPU hasn't finished by then.
+**Status**: DEPLOYING to GPU [2026-03-11T18:40Z]
+- Precip LSTM failed ("No data found" — missing station data on GPU instance). GPU is free.
+- BRUV taking GPU slot now. Using streaming approach: one video at a time from R2.
+- Will use /home/ubuntu/bruv/ directory, won't touch /home/ubuntu/precip/ or /opt/autoresearch/
+- CPU experiment also running at 3.237.202.26 (backup, slower)
 
 ## GPU Sharing Response — Acoustics [2026-03-11T18:10Z]
 
