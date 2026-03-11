@@ -12,26 +12,25 @@ from prepare import (
     parse_series_id, parse_subvideo_index,
 )
 
-TIER = 2
+TIER = 1
 
 SAMPLE_FPS = 1
 SCALE_FACTOR = 0.5
-WARMUP_FRAMES = 20
 
-MOG2_HISTORY = 200
-MOG2_VAR_THRESHOLD = 40
+MOG2_HISTORY = 500
+MOG2_VAR_THRESHOLD = 64
 MOG2_DETECT_SHADOWS = True
-MIN_CONTOUR_AREA = 100
-MORPH_KERNEL_SIZE = 3
-BLUR_SIZE = 5
-SINGLE_FISH_AREA = 234
+MIN_CONTOUR_AREA = 150
+MORPH_KERNEL_SIZE = 5
+BLUR_SIZE = 7
+WARMUP_FRAMES = 30
+SINGLE_FISH_AREA = 400
+MAX_FISH_PER_BLOB = 30
 
-FLOW_THRESHOLD = 2.0
-COMBINED_WEIGHT_MOG2 = 0.7
-COMBINED_WEIGHT_FLOW = 0.3
+PERCENTILE = 95
 
 
-def count_fish_combined(video_path):
+def count_fish_mog2(video_path):
     import cv2
 
     cap = cv2.VideoCapture(video_path)
@@ -53,13 +52,11 @@ def count_fish_combined(video_path):
 
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (MORPH_KERNEL_SIZE, MORPH_KERNEL_SIZE))
     sf2 = SCALE_FACTOR * SCALE_FACTOR
-    scaled_min_area = int(MIN_CONTOUR_AREA * sf2)
-    scaled_fish_area = SINGLE_FISH_AREA * sf2
+    scaled_min = int(MIN_CONTOUR_AREA * sf2)
+    scaled_fish = SINGLE_FISH_AREA * sf2
 
     frame_counts = []
     frame_idx = 0
-    max_count = 0
-    prev_gray = None
 
     while frame_idx < total_frames:
         cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
@@ -78,41 +75,27 @@ def count_fish_combined(video_path):
         fg_mask = cv2.morphologyEx(fg_mask, cv2.MORPH_CLOSE, kernel)
 
         contours, _ = cv2.findContours(fg_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        mog2_count = 0
+        count = 0
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area >= scaled_min_area:
-                fish_in_blob = max(1, int(round(area / scaled_fish_area)))
-                mog2_count += fish_in_blob
+            if area < scaled_min:
+                continue
+            fish_in_blob = min(MAX_FISH_PER_BLOB, max(1, int(round(area / scaled_fish))))
+            count += fish_in_blob
 
-        flow_count = 0
-        if prev_gray is not None:
-            flow = cv2.calcOpticalFlowFarneback(prev_gray, gray, None, 0.5, 3, 15, 3, 5, 1.2, 0)
-            mag = np.sqrt(flow[..., 0]**2 + flow[..., 1]**2)
-            motion_mask = (mag > FLOW_THRESHOLD).astype(np.uint8) * 255
-            motion_mask = cv2.morphologyEx(motion_mask, cv2.MORPH_OPEN, kernel)
-            motion_mask = cv2.morphologyEx(motion_mask, cv2.MORPH_CLOSE, kernel)
-            flow_contours, _ = cv2.findContours(motion_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            for cnt in flow_contours:
-                area = cv2.contourArea(cnt)
-                if area >= scaled_min_area:
-                    fish_in_blob = max(1, int(round(area / scaled_fish_area)))
-                    flow_count += fish_in_blob
-
-        combined = int(COMBINED_WEIGHT_MOG2 * mog2_count + COMBINED_WEIGHT_FLOW * flow_count)
-
-        prev_gray = gray.copy()
         time_sec = frame_idx / native_fps
-        frame_counts.append((time_sec, combined))
-        if len(frame_counts) > WARMUP_FRAMES and combined > max_count:
-            max_count = combined
-
+        frame_counts.append((time_sec, count))
         frame_idx += frame_interval
 
     cap.release()
     print(f"  Processed {len(frame_counts)} frames")
 
-    return max_count, frame_counts
+    if len(frame_counts) <= WARMUP_FRAMES:
+        return 0, frame_counts
+
+    counts_after_warmup = [c for _, c in frame_counts[WARMUP_FRAMES:]]
+    maxn = int(np.percentile(counts_after_warmup, PERCENTILE))
+    return maxn, frame_counts
 
 
 def main():
@@ -124,12 +107,16 @@ def main():
 
     config = {
         "tier": TIER,
-        "method": "mog2_optflow_combined",
+        "method": "mog2_area_density_capped",
         "sample_fps": SAMPLE_FPS,
         "scale_factor": SCALE_FACTOR,
+        "mog2_history": MOG2_HISTORY,
+        "mog2_var_threshold": MOG2_VAR_THRESHOLD,
+        "min_contour_area": MIN_CONTOUR_AREA,
         "single_fish_area": SINGLE_FISH_AREA,
-        "flow_threshold": FLOW_THRESHOLD,
-        "weights": f"{COMBINED_WEIGHT_MOG2}/{COMBINED_WEIGHT_FLOW}",
+        "max_fish_per_blob": MAX_FISH_PER_BLOB,
+        "morph_kernel": MORPH_KERNEL_SIZE,
+        "percentile": PERCENTILE,
     }
     print(f"\nConfig: {json.dumps(config, indent=2)}")
 
@@ -160,14 +147,15 @@ def main():
 
         print(f"\n  Processing: {video_name}")
         t1 = time.time()
-        max_count, frame_counts = count_fish_combined(video_path)
+        max_count, frame_counts = count_fish_mog2(video_path)
         pred_maxn[video_name] = max_count
         print(f"  MaxN prediction: {max_count} ({time.time()-t1:.1f}s)")
 
         if frame_counts:
             counts = [c for _, c in frame_counts]
             print(f"  Count stats: mean={np.mean(counts):.1f}, "
-                  f"max={np.max(counts)}, std={np.std(counts):.1f}")
+                  f"max={np.max(counts)}, p{PERCENTILE}={np.percentile(counts, PERCENTILE):.0f}, "
+                  f"std={np.std(counts):.1f}")
 
     print("\n--- Evaluation ---")
     eval_result = evaluate_maxn_predictions(pred_maxn, true_maxn)
@@ -188,7 +176,7 @@ def main():
     print(f"correlation:      {eval_result.get('correlation', 0.0):.4f}")
     print(f"n_videos:         {eval_result.get('n_videos', 0)}")
     print(f"tier:             {TIER}")
-    print(f"method:           mog2_optflow_combined")
+    print(f"method:           mog2_area_density_capped")
     print(f"total_seconds:    {t_total:.1f}")
     print(f"device:           {DEVICE}")
 
