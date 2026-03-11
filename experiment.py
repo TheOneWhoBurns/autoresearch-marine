@@ -316,14 +316,14 @@ def train_cnn_classifier(segments, pseudo_labels):
     n_classes = len(set(pseudo_labels[mask]))
     print(f"  Training CNN: {len(labeled_indices)} labeled segments, {n_classes} classes")
 
-    # Build mel spectrograms
-    mels = []
-    for idx in labeled_indices:
-        mel = compute_melspec(segments[idx])  # (128, T)
-        mels.append(mel)
-    time_dim = min(m.shape[1] for m in mels)
-    X = np.array([m[:, :time_dim] for m in mels], dtype=np.float32)
-    X = (X - X.min()) / (X.max() - X.min() + 1e-8)
+    # Build mel spectrograms for ALL segments, normalize together
+    all_mels = []
+    for seg in segments:
+        all_mels.append(compute_melspec(seg))
+    time_dim = min(m.shape[1] for m in all_mels)
+    X_all = np.array([m[:, :time_dim] for m in all_mels], dtype=np.float32)
+    X_all = (X_all - X_all.min()) / (X_all.max() - X_all.min() + 1e-8)
+    X = X_all[labeled_indices]
     y = pseudo_labels[mask]
 
     # Simple CNN
@@ -360,19 +360,16 @@ def train_cnn_classifier(segments, pseudo_labels):
     model = MarineCNN(128, time_dim, n_classes, feat_dim=64).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=5e-4)
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+    batch_size = 64
+    n = len(X_tensor)
+    n_epochs = 400
+
     warmup_epochs = 20
     def lr_lambda(epoch):
         if epoch < warmup_epochs:
             return epoch / warmup_epochs
-        return 0.5 * (1 + np.cos(np.pi * (epoch - warmup_epochs) / (400 - warmup_epochs)))
+        return 0.5 * (1 + np.cos(np.pi * (epoch - warmup_epochs) / (n_epochs - warmup_epochs)))
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
-
-    X_tensor = torch.from_numpy(X[:, np.newaxis, :, :])
-    y_tensor = torch.from_numpy(y.astype(np.int64))
-
-    batch_size = 64
-    n = len(X_tensor)
-    n_epochs = 400
 
     model.train()
     for epoch in range(n_epochs):
@@ -396,14 +393,8 @@ def train_cnn_classifier(segments, pseudo_labels):
             acc = correct / total * 100
             print(f"    Epoch {epoch+1}/{n_epochs}: loss={total_loss:.4f}, acc={acc:.1f}%")
 
-    # Extract features for ALL segments (including noise)
+    # Extract features for ALL segments (reuse pre-computed mels)
     model.eval()
-    all_mels = []
-    for seg in segments:
-        mel = compute_melspec(seg)
-        all_mels.append(mel[:, :time_dim])
-    X_all = np.array(all_mels, dtype=np.float32)
-    X_all = (X_all - X_all.min()) / (X_all.max() - X_all.min() + 1e-8)
     X_all_tensor = torch.from_numpy(X_all[:, np.newaxis, :, :])
 
     features = []
