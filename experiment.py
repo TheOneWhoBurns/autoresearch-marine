@@ -2,8 +2,9 @@
 Marine Acoustic Autoresearch — Experiment Script
 THIS IS THE ONLY FILE THE AGENT MODIFIES.
 
-Starting point: Tier 1 acoustic indices baseline.
-The agent evolves this through Tiers 1-3, choosing the best approach.
+Cross-tier approach: Tier 1 acoustic indices for clustering +
+Tier 2 PANNs predictions for ecological interpretation +
+temporal analysis for discovery.
 
 Metric: composite_score from prepare.evaluate_clustering() — higher is better.
 
@@ -11,6 +12,7 @@ Usage: python3 experiment.py > run.log 2>&1
 """
 
 import os
+import re
 import time
 import json
 import numpy as np
@@ -29,33 +31,37 @@ from prepare import (
 # ---------------------------------------------------------------------------
 # TIER: current approach (agent updates this as it progresses)
 # ---------------------------------------------------------------------------
-TIER = 1  # 1=acoustic indices, 2=pretrained embeddings, 3=custom classifier
+TIER = 2  # 1=acoustic indices, 2=pretrained embeddings, 3=custom classifier
 
 # ---------------------------------------------------------------------------
 # Hyperparameters
 # ---------------------------------------------------------------------------
 
-# Feature extraction
+# Feature extraction (Tier 1)
 N_MFCC = 20
-USE_DELTA_MFCC = True       # delta + delta-delta MFCCs
+USE_DELTA_MFCC = True
 USE_BAND_POWER = True
 USE_SPECTRAL = True
-USE_SPECTRAL_CONTRAST = True # spectral contrast (7 bands)
+USE_SPECTRAL_CONTRAST = True
 USE_ZCR = True
 USE_RMS = True
 
+# PANNs (Tier 2 — used for interpretation, not clustering)
+USE_PANNS_LABELS = True
+
 # Dimensionality reduction
-REDUCER = "umap"        # "umap", "pca", or "none"
+REDUCER = "umap"
 N_COMPONENTS = 20
 UMAP_N_NEIGHBORS = 10
 UMAP_MIN_DIST = 0.0
 UMAP_METRIC = "euclidean"
 
 # Clustering
-CLUSTERER = "hdbscan"   # "hdbscan", "kmeans", "spectral", "gmm"
+CLUSTERER = "hdbscan"
 HDBSCAN_MIN_CLUSTER = 10
 HDBSCAN_MIN_SAMPLES = 5
 KMEANS_K = 8
+
 
 # ---------------------------------------------------------------------------
 # Feature extraction (Tier 1: acoustic indices)
@@ -69,7 +75,6 @@ def extract_features(segments):
     for i, seg in enumerate(segments):
         feats = []
 
-        # MFCCs (mean + std) + deltas
         mfcc = librosa.feature.mfcc(y=seg, sr=TARGET_SR, n_mfcc=N_MFCC,
                                      n_fft=N_FFT, hop_length=HOP_LENGTH)
         feats.extend(np.mean(mfcc, axis=1))
@@ -80,12 +85,10 @@ def extract_features(segments):
             feats.extend(np.mean(delta, axis=1))
             feats.extend(np.mean(delta2, axis=1))
 
-        # Ecological band powers
         if USE_BAND_POWER:
             bp = compute_band_power(seg)
             feats.extend([bp["low"], bp["mid"], bp["high"]])
 
-        # Spectral shape
         if USE_SPECTRAL:
             centroid = librosa.feature.spectral_centroid(y=seg, sr=TARGET_SR,
                                                          n_fft=N_FFT, hop_length=HOP_LENGTH)
@@ -97,35 +100,30 @@ def extract_features(segments):
                           np.mean(bandwidth), np.std(bandwidth),
                           np.mean(rolloff), np.std(rolloff)])
 
-        # Spectral contrast
         if USE_SPECTRAL_CONTRAST:
             contrast = librosa.feature.spectral_contrast(y=seg, sr=TARGET_SR,
                                                           n_fft=N_FFT, hop_length=HOP_LENGTH)
             feats.extend(np.mean(contrast, axis=1))
             feats.extend(np.std(contrast, axis=1))
 
-        # Zero crossing rate
         if USE_ZCR:
             zcr = librosa.feature.zero_crossing_rate(seg, frame_length=N_FFT,
                                                       hop_length=HOP_LENGTH)
             feats.extend([np.mean(zcr), np.std(zcr)])
 
-        # RMS energy
         if USE_RMS:
             feats.append(compute_rms(seg))
 
-        # NDSI: Normalized Difference Soundscape Index
-        # bio = MID band, anthro = LOW band; NDSI = (bio-anthro)/(bio+anthro)
+        # NDSI
         bp_vals = compute_band_power(seg) if not USE_BAND_POWER else bp
         bio = 10**(bp_vals["mid"]/10)
         anthro = 10**(bp_vals["low"]/10)
         ndsi = (bio - anthro) / (bio + anthro + 1e-12)
         feats.append(ndsi)
 
-        # Mel spectrogram summary stats (compressed representation)
+        # Mel band stats
         mel = compute_melspec(seg)
-        # Per-band statistics across time
-        feats.extend(np.mean(mel, axis=1)[::4])   # subsample every 4th band
+        feats.extend(np.mean(mel, axis=1)[::4])
         feats.extend(np.std(mel, axis=1)[::4])
 
         features_list.append(feats)
@@ -133,6 +131,170 @@ def extract_features(segments):
             print(f"  Features: {i+1}/{len(segments)}")
 
     return np.array(features_list, dtype=np.float32)
+
+
+# ---------------------------------------------------------------------------
+# PANNs AudioSet predictions (Tier 2 — for cluster interpretation)
+# ---------------------------------------------------------------------------
+
+# Marine-relevant AudioSet classes
+MARINE_CLASSES = {
+    "Water": "ambient", "Ocean": "ambient", "Rain": "ambient",
+    "Stream": "ambient", "Waves, surf": "ambient",
+    "Boat, Water vehicle": "anthropogenic", "Ship": "anthropogenic",
+    "Engine": "anthropogenic", "Motor vehicle (road)": "anthropogenic",
+    "Vehicle": "anthropogenic", "Motorboat, speedboat": "anthropogenic",
+    "Mechanical fan": "anthropogenic",
+    "Whale vocalization": "biological", "Animal": "biological",
+    "Bird": "biological", "Insect": "biological",
+    "Click": "biological", "Squeak": "biological",
+    "Chirp, tweet": "biological", "Splash, splashing": "ambient",
+    "Rumble": "ambiguous", "Hum": "ambiguous",
+    "White noise": "ambient", "Noise": "ambient",
+    "Silence": "ambient", "Static": "ambient",
+}
+
+
+def get_panns_labels(segments, n_per_cluster=3):
+    """Get PANNs AudioSet predictions for representative segments."""
+    try:
+        import torch
+        from panns_inference import AudioTagging
+        from panns_inference.config import labels as audioset_labels
+        import librosa
+    except ImportError:
+        print("  PANNs not available, skipping AudioSet labels")
+        return None
+
+    panns_sr = 32000
+    print("  Loading PANNs model...")
+    at = AudioTagging(checkpoint_path=None, device='cpu')
+
+    results = {}
+    for i, seg in enumerate(segments):
+        resampled = librosa.resample(seg, orig_sr=TARGET_SR, target_sr=panns_sr)
+        audio_tensor = resampled[np.newaxis, :]
+        import torch as th
+        with th.no_grad():
+            clip_probs, emb = at.inference(th.from_numpy(audio_tensor))
+
+        top_indices = np.argsort(clip_probs[0])[-10:][::-1]
+        top_labels = [(audioset_labels[idx], float(clip_probs[0][idx])) for idx in top_indices]
+        results[i] = top_labels
+
+    return results
+
+
+def classify_segment_panns(panns_preds):
+    """Classify a segment based on PANNs top predictions into ecological categories."""
+    if panns_preds is None:
+        return "unknown"
+
+    bio_score = 0.0
+    anthro_score = 0.0
+    ambient_score = 0.0
+
+    for label, prob in panns_preds:
+        category = MARINE_CLASSES.get(label, None)
+        if category == "biological":
+            bio_score += prob
+        elif category == "anthropogenic":
+            anthro_score += prob
+        elif category == "ambient":
+            ambient_score += prob
+
+    if anthro_score > 0.1:
+        return "anthropogenic"
+    elif bio_score > 0.05:
+        return "biological"
+    elif ambient_score > 0.2:
+        return "ambient"
+    return "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Temporal analysis
+# ---------------------------------------------------------------------------
+
+def parse_timestamp(filename):
+    """Extract timestamp from SoundTrap filename like '6478.230723191251.wav'."""
+    match = re.search(r'\.(\d{12})\.', filename)
+    if match:
+        ts = match.group(1)
+        # Format: YYMMDDHHMMSS
+        year = 2000 + int(ts[0:2])
+        month = int(ts[2:4])
+        day = int(ts[4:6])
+        hour = int(ts[6:8])
+        minute = int(ts[8:10])
+        second = int(ts[10:12])
+        return {"year": year, "month": month, "day": day,
+                "hour": hour, "minute": minute, "second": second}
+    return None
+
+
+def analyze_temporal(labels, metadata, segments):
+    """Analyze temporal patterns across clusters."""
+    print(f"\n{'='*60}")
+    print("Temporal Analysis")
+    print(f"{'='*60}")
+
+    # Parse timestamps for all segments
+    timestamps = []
+    for m in metadata:
+        ts = parse_timestamp(m["file"])
+        if ts:
+            # Adjust for segment offset within file
+            total_seconds = ts["hour"] * 3600 + ts["minute"] * 60 + ts["second"]
+            total_seconds += m["offset_s"]
+            ts["total_seconds"] = total_seconds
+            ts["hour_decimal"] = total_seconds / 3600
+        timestamps.append(ts)
+
+    valid_ts = [t for t in timestamps if t is not None]
+    if not valid_ts:
+        print("  No timestamps found in filenames")
+        return {}
+
+    print(f"  Parsed {len(valid_ts)}/{len(timestamps)} timestamps")
+
+    # Cluster temporal distribution
+    temporal_info = {}
+    for c in sorted(set(labels[labels >= 0])):
+        cmask = labels == c
+        cluster_hours = [timestamps[i]["hour"] for i in range(len(timestamps))
+                        if cmask[i] and timestamps[i] is not None]
+        if cluster_hours:
+            unique_hours = sorted(set(cluster_hours))
+            temporal_info[f"cluster_{c}"] = {
+                "hours": unique_hours,
+                "n_segments": int(cmask.sum()),
+                "hour_range": f"{min(unique_hours):02d}:00-{max(unique_hours):02d}:59",
+            }
+            print(f"  Cluster {c}: hours={unique_hours}, "
+                  f"n={cmask.sum()}")
+
+    # Day vs night analysis (rough: day=6-18, night=18-6)
+    day_mask = np.array([timestamps[i] is not None and 6 <= timestamps[i]["hour"] < 18
+                         for i in range(len(timestamps))])
+    night_mask = np.array([timestamps[i] is not None and (timestamps[i]["hour"] >= 18 or timestamps[i]["hour"] < 6)
+                          for i in range(len(timestamps))])
+
+    if day_mask.any() and night_mask.any():
+        print(f"\n  Day segments (6-18h): {day_mask.sum()}")
+        print(f"  Night segments (18-6h): {night_mask.sum()}")
+
+        # Per-cluster day/night breakdown
+        for c in sorted(set(labels[labels >= 0])):
+            cmask = labels == c
+            day_count = (cmask & day_mask).sum()
+            night_count = (cmask & night_mask).sum()
+            total = day_count + night_count
+            if total > 0:
+                day_pct = day_count / total * 100
+                print(f"  Cluster {c}: {day_pct:.0f}% day, {100-day_pct:.0f}% night ({total} segs)")
+
+    return temporal_info
 
 
 # ---------------------------------------------------------------------------
@@ -182,7 +344,7 @@ def cluster(features_reduced):
 # Analysis
 # ---------------------------------------------------------------------------
 
-def analyze_clusters(labels, metadata, features, segments=None):
+def analyze_clusters(labels, metadata, features, segments=None, panns_labels=None):
     """Print cluster summary with ecological interpretation."""
     unique_labels = sorted(set(labels))
     print(f"\n{'='*60}")
@@ -202,9 +364,9 @@ def analyze_clusters(labels, metadata, features, segments=None):
         print(f"    Units: {unit_counts}")
         print(f"    Files: {len(files)} unique")
 
-        # Band power profile for ecological interpretation
+        # Band power profile
         if segments is not None:
-            sample_indices = [i for i in range(len(labels)) if mask[i]][:5]
+            sample_indices = [i for i in range(len(labels)) if mask[i]][:10]
             if sample_indices:
                 powers = [compute_band_power(segments[i]) for i in sample_indices]
                 avg_low = np.mean([p["low"] for p in powers])
@@ -212,13 +374,60 @@ def analyze_clusters(labels, metadata, features, segments=None):
                 avg_high = np.mean([p["high"] for p in powers])
                 print(f"    Band profile: LOW={avg_low:.1f}dB  MID={avg_mid:.1f}dB  HIGH={avg_high:.1f}dB")
 
-                # Ecological guess
-                if avg_low > avg_mid and avg_low > avg_high:
-                    print(f"    -> Likely: boat noise or large whale vocalizations")
-                elif avg_mid > avg_low and avg_mid > avg_high:
-                    print(f"    -> Likely: snapping shrimp, dolphin whistles, or reef activity")
-                elif avg_high > avg_mid:
-                    print(f"    -> Likely: echolocation clicks or ultrasonic biological sounds")
+                # NDSI for cluster
+                ndsi_vals = []
+                for idx in sample_indices:
+                    bp = compute_band_power(segments[idx])
+                    bio_lin = 10**(bp["mid"]/10)
+                    anthro_lin = 10**(bp["low"]/10)
+                    ndsi_vals.append((bio_lin - anthro_lin) / (bio_lin + anthro_lin + 1e-12))
+                avg_ndsi = np.mean(ndsi_vals)
+                print(f"    NDSI: {avg_ndsi:.3f} ({'biophony-dominated' if avg_ndsi > 0 else 'anthrophony-dominated'})")
+
+                # RMS energy
+                rms_vals = [compute_rms(segments[idx]) for idx in sample_indices]
+                print(f"    RMS energy: {np.mean(rms_vals):.6f} ({'loud' if np.mean(rms_vals) > 0.01 else 'quiet'})")
+
+                # Improved ecological interpretation
+                mid_low_ratio = avg_mid - avg_low
+                high_mid_ratio = avg_high - avg_mid
+                rms_mean = np.mean(rms_vals)
+
+                if rms_mean < 0.001:
+                    eco_label = "near-silence / deep ambient"
+                elif avg_low > -30 and mid_low_ratio < -15:
+                    eco_label = "boat/ship engine noise"
+                elif avg_low > -35 and mid_low_ratio < -8:
+                    eco_label = "distant vessel or low-freq rumble"
+                elif avg_ndsi > 0.3:
+                    eco_label = "strong biological activity (reef/shrimp)"
+                elif avg_ndsi > 0 and avg_mid > -50:
+                    eco_label = "biological sounds (whistles/clicks/reef)"
+                elif high_mid_ratio > -5:
+                    eco_label = "echolocation clicks (high-freq)"
+                elif avg_low < -55 and avg_mid < -60:
+                    eco_label = "quiet ambient (low energy)"
+                else:
+                    eco_label = "mixed soundscape"
+                print(f"    -> Ecological: {eco_label}")
+
+        # PANNs labels for representative samples
+        if panns_labels is not None:
+            panns_sample_indices = [i for i in range(len(labels)) if mask[i]][:3]
+            categories = []
+            all_top_labels = []
+            for idx in panns_sample_indices:
+                if idx in panns_labels:
+                    cat = classify_segment_panns(panns_labels[idx])
+                    categories.append(cat)
+                    top3 = panns_labels[idx][:3]
+                    all_top_labels.extend([l for l, _ in top3])
+            if categories:
+                from collections import Counter
+                cat_counts = Counter(categories)
+                label_counts = Counter(all_top_labels).most_common(5)
+                print(f"    PANNs categories: {dict(cat_counts)}")
+                print(f"    PANNs top labels: {[f'{l}' for l, c in label_counts]}")
 
 
 # ---------------------------------------------------------------------------
@@ -234,10 +443,12 @@ def main():
 
     config = {
         "tier": TIER,
+        "feature_mode": "tier1_clustering + panns_interpretation",
         "n_mfcc": N_MFCC, "use_delta_mfcc": USE_DELTA_MFCC,
         "use_band_power": USE_BAND_POWER,
         "use_spectral": USE_SPECTRAL, "use_spectral_contrast": USE_SPECTRAL_CONTRAST,
         "use_zcr": USE_ZCR, "use_rms": USE_RMS,
+        "use_panns_labels": USE_PANNS_LABELS,
         "reducer": REDUCER, "n_components": N_COMPONENTS,
         "umap_n_neighbors": UMAP_N_NEIGHBORS, "umap_min_dist": UMAP_MIN_DIST,
         "clusterer": CLUSTERER,
@@ -252,7 +463,7 @@ def main():
     t_load = time.time() - t_start
     print(f"Data loaded: {t_load:.1f}s")
 
-    # Extract features
+    # Extract features (Tier 1 for clustering)
     print("\n--- Extracting features ---")
     t1 = time.time()
     features = extract_features(segments)
@@ -276,17 +487,54 @@ def main():
     # Discovery insights
     discovery = evaluate_discovery(labels, metadata, features_reduced, segments)
 
-    # Analysis
-    analyze_clusters(labels, metadata, features, segments)
+    # PANNs labels for cluster representatives (Tier 2 interpretation)
+    panns_labels = None
+    if USE_PANNS_LABELS:
+        print("\n--- PANNs AudioSet Labels (Tier 2) ---")
+        t1 = time.time()
+        # Get representative segments from each cluster (closest to centroid)
+        representative_indices = []
+        for c in sorted(set(labels[labels >= 0])):
+            cmask = labels == c
+            cluster_indices = np.where(cmask)[0]
+            cluster_features = features_reduced[cmask]
+            centroid = cluster_features.mean(axis=0)
+            distances = np.linalg.norm(cluster_features - centroid, axis=1)
+            closest = cluster_indices[np.argsort(distances)[:3]]
+            representative_indices.extend(closest.tolist())
+
+        # Also add a few noise samples if any
+        noise_indices = np.where(labels == -1)[0]
+        if len(noise_indices) > 0:
+            representative_indices.extend(noise_indices[:3].tolist())
+
+        rep_segments = [segments[i] for i in representative_indices]
+        raw_panns = get_panns_labels(rep_segments)
+        if raw_panns is not None:
+            panns_labels = {representative_indices[k]: v for k, v in raw_panns.items()}
+            print(f"  PANNs labels for {len(representative_indices)} representatives, {time.time()-t1:.1f}s")
+
+    # Analysis with improved interpretation
+    analyze_clusters(labels, metadata, features, segments, panns_labels)
+
+    # Temporal analysis
+    temporal = analyze_temporal(labels, metadata, segments)
 
     # Save
     os.makedirs(RESULTS_DIR, exist_ok=True)
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     result_path = os.path.join(RESULTS_DIR, f"result_{timestamp}.json")
+    result_data = {
+        "config": config, "evaluation": eval_result,
+        "discovery": discovery, "temporal": temporal,
+    }
+    if panns_labels:
+        # Serialize PANNs labels (convert int keys to strings for JSON)
+        result_data["panns_labels"] = {str(k): v for k, v in panns_labels.items()}
     with open(result_path, "w") as f:
-        json.dump({"config": config, "evaluation": eval_result, "discovery": discovery}, f, indent=2)
+        json.dump(result_data, f, indent=2)
 
-    # Final summary (parseable — the autoresearch loop reads these)
+    # Final summary
     t_total = time.time() - t_start
     print("\n---")
     print(f"composite_score:  {eval_result['composite_score']:.6f}")
