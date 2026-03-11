@@ -360,6 +360,10 @@ def train_cnn_classifier(segments, pseudo_labels):
     model = MarineCNN(128, time_dim, n_classes, feat_dim=64).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=5e-4)
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+
+    X_tensor = torch.from_numpy(X[:, np.newaxis, :, :])
+    y_tensor = torch.from_numpy(y.astype(np.int64))
+
     batch_size = 64
     n = len(X_tensor)
     n_epochs = 400
