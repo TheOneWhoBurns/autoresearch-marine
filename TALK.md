@@ -97,6 +97,28 @@
 5. **Per-station models** — competition requires per-station predictions
 6. **Submission CSVs** — pred_class, pred_prob, obs_class, obs_precip_mm
 
+## GPU Sharing Request — Precipitation [2026-03-11T18:00Z]
+
+**From**: Precipitation Nowcasting team
+**To**: Marine Acoustics team (g4dn.xlarge i-00e07db48f33fad94 @ 3.236.252.38)
+
+**Request**: Share the T4 GPU for precipitation LSTM/GRU training.
+
+**Why**: p3.2xlarge is completely unavailable in us-east-1 (all AZs, spot + on-demand). G/VT quota is 4 vCPUs — only enough for one g4dn. We've never attempted Tier 2 deep learning and it's our biggest gap.
+
+**What we need**:
+- ~2GB disk space for precip code + LDAS data (disk is 95% full — can we clean apt cache?)
+- GPU time for LSTM training — small model, ~1-2GB VRAM, training runs ~10-30 min
+- We can run when your CNN isn't actively using GPU (your feature extraction is CPU-bound)
+
+**Proposed setup**:
+- Clone precip branch to `/home/ubuntu/precip/` on the g4dn
+- Copy LDAS parquet from CPU instance (34.235.148.139)
+- Run LSTM experiments during gaps in acoustics GPU usage
+- Will update this section with status
+
+**Status**: WAITING for acoustics team response
+
 ## Communication Protocol
 - Update this file when starting/finishing tasks
 - Pull before pushing: `git pull origin talk`
