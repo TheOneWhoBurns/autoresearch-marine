@@ -38,11 +38,10 @@ date
 
 # Install dependencies
 apt-get update -qq
-apt-get install -y -qq python3-pip python3-venv ffmpeg libsndfile1 > /dev/null 2>&1
-python3 -m venv /opt/venv
-source /opt/venv/bin/activate
-pip install -q numpy scipy scikit-learn librosa soundfile umap-learn hdbscan matplotlib torch --index-url https://download.pytorch.org/whl/cpu
-pip install -q panns-inference boto3
+apt-get install -y -qq python3-pip ffmpeg libsndfile1 > /dev/null 2>&1
+pip3 install --break-system-packages -q numpy scipy scikit-learn librosa soundfile umap-learn hdbscan matplotlib boto3
+pip3 install --break-system-packages -q torch --index-url https://download.pytorch.org/whl/cpu
+pip3 install --break-system-packages -q panns-inference
 
 mkdir -p /opt/autoresearch/data/raw/5783 /opt/autoresearch/data/raw/6478 /opt/autoresearch/data/raw/Music_Soundtrap_Pilot
 mkdir -p /opt/autoresearch/data/cache /opt/autoresearch/data/results
@@ -89,7 +88,6 @@ find data/raw -name '*.wav' | wc -l
 du -sh data/raw/
 
 echo '=== running experiment ==='
-source /opt/venv/bin/activate
 cd /opt/autoresearch
 python3 -u experiment.py 2>&1 | tee run.log
 
