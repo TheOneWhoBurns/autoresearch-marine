@@ -46,10 +46,11 @@ YOLO_FISH_CLASSES = {"kite", "bird"}
 N_PEAK_FRAMES = 10
 
 # --- Calibration config ---
-CALIB_MIN_DETECTIONS = 5   # min YOLO detections for a frame to be useful
+CALIB_MIN_DETECTIONS = 3   # min YOLO detections for a frame to be useful
 CALIB_MAX_DETECTIONS = 50  # max — above this, occlusion makes detection unreliable
-CALIB_N_FRAMES = 20        # number of frames to sample for calibration
+CALIB_N_FRAMES = 25        # number of frames to sample for calibration
 CALIB_MIN_SAMPLES = 3      # need at least this many calibration frames
+CALIB_PERCENTILE = 25      # use 25th percentile PPF (least occluded frames)
 
 # --- VLM config ---
 VLM_N_FRAMES = 3
@@ -229,16 +230,17 @@ def calibrate_ppf(video_path, scan_results):
     if len(scan_results) <= WARMUP_FRAMES:
         return DEFAULT_PPF
 
-    # Sort frames by fg_pixels (ascending) and sample from middle range
-    # We want medium-activity frames, not peaks (too dense) or quiet (too sparse)
+    # Sort frames by fg_pixels (ascending) and sample from a wide range
+    # Include lower-activity frames (where fish are more separated = better calibration)
     after_warmup = scan_results[WARMUP_FRAMES:]
     sorted_by_px = sorted(after_warmup, key=lambda x: x[2])
 
-    # Take frames from the 40th-80th percentile of activity
+    # Take frames from the 20th-80th percentile of activity
+    # Lower bound is 20% (need some fish), upper is 80% (avoid densest frames)
     n = len(sorted_by_px)
-    p40_idx = int(n * 0.4)
+    p20_idx = int(n * 0.2)
     p80_idx = int(n * 0.8)
-    candidate_frames = sorted_by_px[p40_idx:p80_idx]
+    candidate_frames = sorted_by_px[p20_idx:p80_idx]
 
     # Evenly sample CALIB_N_FRAMES from candidates
     if len(candidate_frames) <= CALIB_N_FRAMES:
@@ -272,10 +274,13 @@ def calibrate_ppf(video_path, scan_results):
     cap.release()
 
     if len(ppf_samples) >= CALIB_MIN_SAMPLES:
-        adaptive_ppf = float(np.median(ppf_samples))
+        # Use 25th percentile — lower PPF values come from least-occluded frames
+        # where YOLO detection is most complete (best calibration quality)
+        adaptive_ppf = float(np.percentile(ppf_samples, CALIB_PERCENTILE))
         print(f"    [Calib] Adaptive PPF: {adaptive_ppf:.1f} "
-              f"(from {len(ppf_samples)} samples, "
-              f"range={min(ppf_samples):.1f}-{max(ppf_samples):.1f})")
+              f"(p{CALIB_PERCENTILE} of {len(ppf_samples)} samples, "
+              f"range={min(ppf_samples):.1f}-{max(ppf_samples):.1f}, "
+              f"median={np.median(ppf_samples):.1f})")
         return adaptive_ppf
     else:
         print(f"    [Calib] Only {len(ppf_samples)} samples, using default PPF={DEFAULT_PPF}")
