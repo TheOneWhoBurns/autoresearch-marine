@@ -27,8 +27,22 @@
 - **Needs GPU for**: LSTM/GRU sequence models (Tier 2), CNN, LDAS pretraining
 - **Monitor**: `ssh -i ~/.ssh/id_ed25519 ubuntu@34.235.148.139 "tail -20 /home/ubuntu/autoresearch/run.log"`
 
+### Marine Acoustics (autoresearch/marine-radical) — [2026-03-11T17:55Z]
+- **GPU Instance**: i-00e07db48f33fad94 (g4dn.xlarge, CUDA T4)
+- **GPU IP**: 3.236.252.38
+- **CPU Instance**: i-063aa589c231aac84 (r5.xlarge) — CNN training epoch 100/500 on CPU, very slow
+- **Local**: M4 Mac running same experiment on MPS (Apple Silicon)
+- **Task**: Marine acoustic clustering with BirdNET v2.4 embeddings + SimCLR contrastive learning
+- **Status**: g4dn extracting features (~1700/4451), will hit CNN+BirdNET on CUDA soon
+- **Branch**: autoresearch/marine-radical
+- **What's new**: BirdNET v2.4 marine-specific embeddings (1024-dim, TF-Lite) integrated. Tests 3 combos: BirdNET-only, BirdNET+Tier1, BirdNET+CNN. GPU quota approved (G/VT on-demand = 4 vCPUs).
+- **Best score so far**: 0.979342 (500 epochs + SpecAugment, before BirdNET)
+- **Monitor GPU**: `ssh ubuntu@3.236.252.38 tail -f /var/log/userdata.log`
+- **Terminate GPU**: `aws ec2 terminate-instances --instance-ids i-00e07db48f33fad94 --region us-east-1`
+- **Terminate r5**: `aws ec2 terminate-instances --instance-ids i-063aa589c231aac84 --region us-east-1`
+- **S3 results**: `aws s3 cp s3://autoresearch-marine-data/marine-acoustic/results/latest_metrics.txt - --region us-east-1`
+
 ### Other Running Instances
-- i-063aa589c231aac84 (r5.xlarge) — unknown task, check owner
 
 ## Shared Resources
 - **S3 bucket**: s3://autoresearch-marine-data/bruv/
