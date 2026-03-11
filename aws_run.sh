@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REGION="us-east-1"
-INSTANCE_TYPE="${INSTANCE_TYPE:-r5.xlarge}"
+INSTANCE_TYPE="${INSTANCE_TYPE:-g4dn.xlarge}"
 KEY_NAME="autoresearch-acoustic-key"
 SG_ID="sg-0d0de2713308d5e70"
 BUCKET="autoresearch-marine-data"
@@ -39,8 +39,8 @@ date
 # Install dependencies
 apt-get update -qq
 apt-get install -y -qq python3-pip ffmpeg libsndfile1 > /dev/null 2>&1
-pip3 install --break-system-packages -q numpy scipy scikit-learn librosa soundfile umap-learn hdbscan matplotlib boto3
-pip3 install --break-system-packages -q torch --index-url https://download.pytorch.org/whl/cpu
+pip3 install --break-system-packages -q numpy scipy scikit-learn librosa soundfile umap-learn hdbscan matplotlib boto3 birdnet
+pip3 install --break-system-packages -q torch --index-url https://download.pytorch.org/whl/cu121
 pip3 install --break-system-packages -q panns-inference
 
 mkdir -p /opt/autoresearch/data/raw/5783 /opt/autoresearch/data/raw/6478 /opt/autoresearch/data/raw/Music_Soundtrap_Pilot
@@ -111,7 +111,7 @@ INSTANCE_ID=$(aws ec2 run-instances \
     --security-group-ids $SG_ID \
     --user-data "$USERDATA_B64" \
     --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":50,"VolumeType":"gp3"}}]' \
-    --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=autoresearch-marine},{Key=Project,Value=autoresearch}]" \
+    --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=autoresearch-marine-g4dn},{Key=Project,Value=autoresearch}]" \
     --region $REGION \
     --query "Instances[0].InstanceId" \
     --output text)

@@ -298,6 +298,62 @@ def analyze_temporal(labels, metadata, segments):
 
 
 # ---------------------------------------------------------------------------
+# Tier 2b: BirdNET embeddings (marine-aware bioacoustic features)
+# ---------------------------------------------------------------------------
+
+def extract_birdnet_embeddings(segments):
+    """Extract BirdNET v2.4 embeddings (1024-dim) for each segment.
+    BirdNET expects 3s chunks at 48kHz, so we split 10s segments and average."""
+    try:
+        from birdnet.models.v2m4 import AudioModelV2M4TFLite
+    except ImportError:
+        print("  BirdNET not available, skipping")
+        return None
+
+    print("  Loading BirdNET model...")
+    model = AudioModelV2M4TFLite()
+    interp = model._audio_interpreter
+    chunk_samples = int(model.chunk_size_s * model.sample_rate)  # 3s * 48kHz = 144000
+    embedding_idx = 545  # GLOBAL_AVG_POOL layer
+
+    embeddings = []
+    for i, seg in enumerate(segments):
+        # Segment is at TARGET_SR (48kHz), BirdNET expects 48kHz — no resample needed
+        # Split 10s segment into 3s chunks with overlap
+        chunk_embeds = []
+        for start in range(0, len(seg) - chunk_samples + 1, chunk_samples):
+            chunk = seg[start:start + chunk_samples].astype(np.float32)
+            interp.resize_tensor_input(0, [1, chunk_samples])
+            interp.allocate_tensors()
+            interp.set_tensor(0, chunk.reshape(1, -1))
+            interp.invoke()
+            emb = interp.get_tensor(embedding_idx)
+            chunk_embeds.append(emb[0])
+
+        # Handle remaining audio if any
+        if not chunk_embeds:
+            # Segment shorter than 3s — pad
+            padded = np.zeros(chunk_samples, dtype=np.float32)
+            padded[:len(seg)] = seg
+            interp.resize_tensor_input(0, [1, chunk_samples])
+            interp.allocate_tensors()
+            interp.set_tensor(0, padded.reshape(1, -1))
+            interp.invoke()
+            emb = interp.get_tensor(embedding_idx)
+            chunk_embeds.append(emb[0])
+
+        # Average chunk embeddings for segment-level representation
+        embeddings.append(np.mean(chunk_embeds, axis=0))
+
+        if (i + 1) % 100 == 0:
+            print(f"  BirdNET embeddings: {i+1}/{len(segments)}")
+
+    result = np.array(embeddings, dtype=np.float32)
+    print(f"  BirdNET embeddings: {result.shape}")
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Tier 3: CNN classifier with pseudo-labels from HDBSCAN
 # ---------------------------------------------------------------------------
 
@@ -307,7 +363,12 @@ def train_cnn_classifier(segments, pseudo_labels):
     import torch
     import torch.nn as nn
 
-    device_str = "mps" if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available() else "cpu"
+    if torch.cuda.is_available():
+        device_str = "cuda"
+    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        device_str = "mps"
+    else:
+        device_str = "cpu"
     device = torch.device(device_str)
     print(f"  CNN device: {device}")
 
@@ -442,7 +503,12 @@ def train_contrastive(segments, temperature=0.1, feat_dim=64, n_epochs=300):
     import torch.nn as nn
     import torch.nn.functional as F
 
-    device_str = "mps" if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available() else "cpu"
+    if torch.cuda.is_available():
+        device_str = "cuda"
+    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        device_str = "mps"
+    else:
+        device_str = "cpu"
     device = torch.device(device_str)
     print(f"  Contrastive device: {device}")
 
@@ -790,6 +856,50 @@ def main():
         labels = labels_t3
         features_reduced = features_reduced_t3
         eval_result = eval_t3
+
+    # Tier 2b: BirdNET embeddings
+    print("\n--- Tier 2b: BirdNET Embeddings ---")
+    t1 = time.time()
+    birdnet_features = extract_birdnet_embeddings(segments)
+    if birdnet_features is not None:
+        bn_norm = StandardScaler().fit_transform(birdnet_features)
+
+        # BirdNET-only
+        features_reduced_bn = reduce_dimensions(bn_norm)
+        labels_bn = cluster(features_reduced_bn)
+        eval_bn = evaluate_clustering(labels_bn, features_reduced_bn, method_name="birdnet_only")
+
+        # BirdNET + Tier1
+        combined_bn_t1 = np.hstack([tier1_norm, bn_norm])
+        features_reduced_bnt1 = reduce_dimensions(combined_bn_t1)
+        labels_bnt1 = cluster(features_reduced_bnt1)
+        eval_bnt1 = evaluate_clustering(labels_bnt1, features_reduced_bnt1, method_name="birdnet_tier1")
+
+        # BirdNET + CNN
+        combined_bn_cnn = np.hstack([cnn_norm, bn_norm])
+        features_reduced_bncnn = reduce_dimensions(combined_bn_cnn)
+        labels_bncnn = cluster(features_reduced_bncnn)
+        eval_bncnn = evaluate_clustering(labels_bncnn, features_reduced_bncnn, method_name="birdnet_cnn")
+
+        print(f"  BN-only: {eval_bn['composite_score']:.6f}, "
+              f"BN+T1: {eval_bnt1['composite_score']:.6f}, "
+              f"BN+CNN: {eval_bncnn['composite_score']:.6f}")
+        print(f"  BirdNET time: {time.time()-t1:.1f}s")
+
+        # Check if any BirdNET combo beats current best
+        bn_candidates = [
+            (eval_bn, labels_bn, features_reduced_bn, "birdnet-only"),
+            (eval_bnt1, labels_bnt1, features_reduced_bnt1, "birdnet+tier1"),
+            (eval_bncnn, labels_bncnn, features_reduced_bncnn, "birdnet+cnn"),
+        ]
+        for ev, lb, fr, name in bn_candidates:
+            if ev['composite_score'] > eval_result['composite_score']:
+                print(f"  ** {name} IMPROVED: {ev['composite_score']:.6f} **")
+                labels = lb
+                features_reduced = fr
+                eval_result = ev
+    else:
+        print("  BirdNET skipped")
 
     # Tier 3b: Contrastive learning (no labels needed)
     print("\n--- Tier 3b: Contrastive Learning (SimCLR) ---")
