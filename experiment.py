@@ -332,10 +332,12 @@ def train_cnn_classifier(segments, pseudo_labels):
             super().__init__()
             self.conv = nn.Sequential(
                 nn.Conv2d(1, 16, 3, stride=2, padding=1), nn.ReLU(), nn.BatchNorm2d(16),
+                nn.Dropout2d(0.1),
                 nn.Conv2d(16, 32, 3, stride=2, padding=1), nn.ReLU(), nn.BatchNorm2d(32),
+                nn.Dropout2d(0.1),
                 nn.Conv2d(32, 64, 3, stride=2, padding=1), nn.ReLU(), nn.BatchNorm2d(64),
+                nn.Dropout2d(0.2),
             )
-            # Compute conv output size
             dummy = torch.zeros(1, 1, n_mels, time_dim)
             conv_out = self.conv(dummy)
             flat_dim = conv_out.numel()
@@ -343,6 +345,7 @@ def train_cnn_classifier(segments, pseudo_labels):
                 nn.Flatten(),
                 nn.Linear(flat_dim, feat_dim),
                 nn.ReLU(),
+                nn.Dropout(0.3),
             )
             self.classifier = nn.Linear(feat_dim, n_classes)
 
@@ -609,17 +612,29 @@ def main():
     print("\n--- Tier 3: CNN Classifier ---")
     t1 = time.time()
     cnn_features = train_cnn_classifier(segments, labels)
-    # Re-cluster using CNN features (combined with Tier 1)
+    # Re-cluster using CNN features
     from sklearn.preprocessing import StandardScaler
-    tier1_norm = StandardScaler().fit_transform(features)
     cnn_norm = StandardScaler().fit_transform(cnn_features)
-    combined = np.hstack([tier1_norm, cnn_norm])
-    print(f"  Combined features: {combined.shape}")
 
-    # Reduce and re-cluster
-    features_reduced_t3 = reduce_dimensions(combined)
+    # Try CNN-only features
+    features_reduced_t3 = reduce_dimensions(cnn_norm)
     labels_t3 = cluster(features_reduced_t3)
     eval_t3 = evaluate_clustering(labels_t3, features_reduced_t3, method_name="tier3_cnn")
+
+    # Also try combined
+    tier1_norm = StandardScaler().fit_transform(features)
+    combined = np.hstack([tier1_norm, cnn_norm])
+    features_reduced_t3c = reduce_dimensions(combined)
+    labels_t3c = cluster(features_reduced_t3c)
+    eval_t3c = evaluate_clustering(labels_t3c, features_reduced_t3c, method_name="tier3_combined")
+    print(f"  CNN-only: {eval_t3['composite_score']:.6f}, "
+          f"Combined: {eval_t3c['composite_score']:.6f}")
+
+    # Pick best Tier 3 result
+    if eval_t3c['composite_score'] > eval_t3['composite_score']:
+        eval_t3 = eval_t3c
+        labels_t3 = labels_t3c
+        features_reduced_t3 = features_reduced_t3c
     print(f"  Tier 3 composite: {eval_t3['composite_score']:.6f} "
           f"(vs Tier 1: {eval_result['composite_score']:.6f})")
     print(f"  Tier 3 time: {time.time()-t1:.1f}s")
@@ -630,7 +645,6 @@ def main():
         labels = labels_t3
         features_reduced = features_reduced_t3
         eval_result = eval_t3
-        features = combined
     else:
         print("  Tier 3 CNN did not improve clustering. Keeping Tier 1 results.")
 
