@@ -360,14 +360,14 @@ def train_cnn_classifier(segments, pseudo_labels):
     model = MarineCNN(128, time_dim, n_classes, feat_dim=64).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=300, eta_min=1e-5)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=400, eta_min=1e-5)
 
     X_tensor = torch.from_numpy(X[:, np.newaxis, :, :])
     y_tensor = torch.from_numpy(y.astype(np.int64))
 
     batch_size = 64
     n = len(X_tensor)
-    n_epochs = 300
+    n_epochs = 400
 
     model.train()
     for epoch in range(n_epochs):
