@@ -358,14 +358,29 @@ def train_cnn_classifier(segments, pseudo_labels):
     model = MarineCNN(128, time_dim, n_classes, feat_dim=64).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200, eta_min=1e-5)
+    n_epochs = 500
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=n_epochs, eta_min=1e-5)
 
     X_tensor = torch.from_numpy(X[:, np.newaxis, :, :])
     y_tensor = torch.from_numpy(y.astype(np.int64))
 
     batch_size = 64
     n = len(X_tensor)
-    n_epochs = 200
+
+    def spec_augment(batch, freq_mask=15, time_mask=20):
+        """SpecAugment: random frequency and time masking."""
+        aug = batch.clone()
+        _, _, nm, nt = aug.shape
+        for i in range(aug.shape[0]):
+            for _ in range(2):  # 2 freq masks
+                f = np.random.randint(0, min(freq_mask, nm))
+                f0 = np.random.randint(0, nm - f)
+                aug[i, :, f0:f0+f, :] = 0
+            for _ in range(2):  # 2 time masks
+                t = np.random.randint(0, min(time_mask, nt))
+                t0 = np.random.randint(0, nt - t)
+                aug[i, :, :, t0:t0+t] = 0
+        return aug
 
     model.train()
     for epoch in range(n_epochs):
@@ -376,6 +391,7 @@ def train_cnn_classifier(segments, pseudo_labels):
         for i in range(0, n, batch_size):
             batch_x = X_tensor[perm[i:i+batch_size]].to(device)
             batch_y = y_tensor[perm[i:i+batch_size]].to(device)
+            batch_x = spec_augment(batch_x)
             logits, _ = model(batch_x)
             loss = criterion(logits, batch_y)
             optimizer.zero_grad()
@@ -385,7 +401,7 @@ def train_cnn_classifier(segments, pseudo_labels):
             correct += (logits.argmax(1) == batch_y).sum().item()
             total += len(batch_y)
         scheduler.step()
-        if (epoch + 1) % 50 == 0:
+        if (epoch + 1) % 100 == 0:
             acc = correct / total * 100
             print(f"    Epoch {epoch+1}/{n_epochs}: loss={total_loss:.4f}, acc={acc:.1f}%")
 
