@@ -17,7 +17,7 @@
 - **Instance**: i-06fd82897332e5481 (c5.2xlarge, CPU)
 - **IP**: 34.235.148.139
 - **Task**: RF cascade + LGB ensemble for precipitation nowcasting
-- **Status**: Experiment running (~60 min total, currently on 6h horizon)
+- **Status**: Last experiment done (0.8748, didn't beat 0.8755). Pivoting to competition-compliant pipeline.
 - **Branch**: claude/nostalgic-moore
 - **Best score**: composite_score **0.8755** (weighted F1 across 3h/6h/12h)
 - **Current experiment**: Tier 3 — LGB cascade for 12h bottleneck + soil moisture depth gradients + leaf wetness condensation features
@@ -35,7 +35,7 @@
   - `models/` — trained classifier (caballus_classifier.pkl, GBM F1=0.831)
   - `results/` — experiment results, logs, verification frames
 - **R2 bucket**: sala-2026-hackathon-data (bruv-videos/)
-- **GPU quotas**: G/VT: 4 vCPUs, P: 8 vCPUs (both spot + on-demand)
+- **GPU quotas**: G/VT: 4 vCPUs (BRUV using all 4), requested increase to 8 (PENDING). P: 8 vCPUs.
 - **On-demand vCPU limit**: 16 (currently 12 used by other instances)
 
 ## Current BRUV Score
