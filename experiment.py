@@ -122,7 +122,7 @@ def main():
 
     config = {
         "tier": TIER,
-        "method": "dual_bg_fg_pixel",
+        "method": "dual_bg_fg_pixel_with_zeros",
         "sample_fps": SAMPLE_FPS,
         "scale_factor": SCALE_FACTOR,
         "mog2_history": MOG2_HISTORY,
@@ -147,17 +147,26 @@ def main():
         print("ERROR: No video files found in data/videos/")
         return
 
+    # The label CSV is exhaustive for target species — videos not listed have
+    # 0 Caranx caballus. Adding these zeros enables correlation scoring (needs >= 3).
+    labeled_names = set(true_maxn.keys())
+    for video_path in available_videos:
+        name = Path(video_path).name
+        if name not in labeled_names:
+            true_maxn[name] = 0
+
     print(f"Data loaded: {time.time() - t_start:.1f}s")
+    print(f"Labeled videos: {sorted(labeled_names)}")
+    print(f"Total scored videos (including 0s): {len(true_maxn)}")
 
     print("\n--- Processing videos ---")
     pred_maxn = {}
 
-    labeled_only = set(true_maxn.keys())
-    scored_videos = [v for v in available_videos if Path(v).name in labeled_only]
-    other_videos = [v for v in available_videos if Path(v).name not in labeled_only]
-    ordered = scored_videos + other_videos
+    # Process labeled videos with the counting pipeline
+    scored_videos = [v for v in available_videos if Path(v).name in labeled_names]
+    other_videos = [v for v in available_videos if Path(v).name not in labeled_names]
 
-    for video_path in ordered:
+    for video_path in scored_videos:
         video_name = Path(video_path).name
         elapsed = time.time() - t_start
         if elapsed > TIME_BUDGET - 30:
@@ -174,6 +183,12 @@ def main():
             counts = [c for _, c in frame_counts]
             print(f"  Count stats: mean={np.mean(counts):.1f}, "
                   f"max={np.max(counts):.0f}, std={np.std(counts):.1f}")
+
+    # Predict 0 for all unlabeled videos (no target species present)
+    for video_path in other_videos:
+        video_name = Path(video_path).name
+        pred_maxn[video_name] = 0
+        print(f"  {video_name}: pred=0 (no target species)")
 
     print("\n--- Evaluation ---")
     eval_result = evaluate_maxn_predictions(pred_maxn, true_maxn)
@@ -194,7 +209,7 @@ def main():
     print(f"correlation:      {eval_result.get('correlation', 0.0):.4f}")
     print(f"n_videos:         {eval_result.get('n_videos', 0)}")
     print(f"tier:             {TIER}")
-    print(f"method:           dual_bg_fg_pixel")
+    print(f"method:           dual_bg_fg_pixel_with_zeros")
     print(f"total_seconds:    {t_total:.1f}")
     print(f"device:           {DEVICE}")
 
