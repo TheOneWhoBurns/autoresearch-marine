@@ -415,30 +415,39 @@ def tier3_vlm_count(video_path, peak_frames):
 
 
 def ensemble_maxn(t1_maxn, t2_maxn, t3_maxn):
-    """Combine tier predictions. T1 is primary, T2/T3 are secondary signals."""
+    """Combine tier predictions. T1 is primary, T2/T3 are diagnostics.
+
+    T1 (calibrated pixel density) works at all scales — dense and sparse.
+    T2 (YOLO detection) saturates in dense scenes (~60-80 max detections).
+    T3 (VLM) is a fundamentally different approach, useful for validation.
+
+    Without ground truth to tune blending weights, the most robust approach
+    is: T1 is the answer. T2/T3 are logged for human QA review.
+    """
     t1 = t1_maxn if t1_maxn is not None else 0
     t2 = t2_maxn if t2_maxn is not None else 0
     t3 = t3_maxn if t3_maxn is not None else 0
 
-    print(f"    [Ensemble] t1={t1}, t2={t2}, t3={t3}")
+    print(f"    [Ensemble] T1={t1}, T2={t2}, T3={t3}")
 
-    if t1 == 0 and t2 == 0 and t3 == 0:
-        return 0
-
+    # T1 is the primary estimate
     final = t1
 
-    # VLM blend
-    if t3 > 0 and t1 > 0:
-        final = int(round(0.7 * t1 + 0.3 * t3))
-        print(f"    [Ensemble] T1+T3 blend: 0.7*{t1} + 0.3*{t3} = {final}")
+    # Diagnostic: flag large disagreements for human review
+    if t2 > 0 and t1 > 0:
+        ratio = t1 / t2
+        if ratio > 3:
+            print(f"    [Ensemble] NOTE: T1/T2 ratio={ratio:.1f} — "
+                  f"likely dense scene (YOLO saturated)")
+        elif ratio < 0.5:
+            print(f"    [Ensemble] NOTE: T1/T2 ratio={ratio:.1f} — "
+                  f"T1 may be undercounting, review recommended")
 
-    # YOLO: only in sparse scenes where T1 might undercount
-    if t2 > 0 and t1 > 0 and t1 <= 2.5 * t2:
-        yolo_corrected = int(round(t2 * 1.30))
-        if yolo_corrected > final:
-            nudge = int(round(0.8 * final + 0.2 * yolo_corrected))
-            print(f"    [Ensemble] YOLO nudge: {final}->{nudge}")
-            final = nudge
+    if t3 > 0 and t1 > 0:
+        ratio = t1 / t3
+        if abs(ratio - 1) > 0.5:
+            print(f"    [Ensemble] NOTE: T1/T3 ratio={ratio:.1f} — "
+                  f"disagreement, review recommended")
 
     print(f"    [Ensemble] final={final}")
     return final
