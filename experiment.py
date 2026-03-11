@@ -55,8 +55,17 @@ CALIB_MIN_SAMPLES = 3      # need at least this many calibration frames
 VLM_N_FRAMES = 3
 
 
+STATIC_MASK_FRAMES = 60  # build static mask from first 60 post-warmup frames
+STATIC_MASK_THRESHOLD = 0.5  # pixel is "static" if foreground in >50% of mask frames
+
 def tier1_scan(video_path):
-    """Scan video with dual BG subtraction. Returns raw foreground pixel counts."""
+    """Scan video with dual BG subtraction + bait arm masking.
+
+    Automatically detects static structures (bait arm, apparatus) by finding
+    pixels that appear as foreground in >50% of the first 60 post-warmup frames.
+    These are masked out before counting, since they're not fish.
+    Generalizes to any BRUV deployment without manual configuration.
+    """
     import cv2
 
     cap = cv2.VideoCapture(video_path)
@@ -81,7 +90,11 @@ def tier1_scan(video_path):
         cv2.MORPH_ELLIPSE, (MORPH_KERNEL_SIZE, MORPH_KERNEL_SIZE))
 
     scan_results = []
+    fg_accumulator = None
+    static_mask = None
+    n_mask_frames = 0
     frame_idx = 0
+    n_frames = 0
 
     while frame_idx < total_frames:
         cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
@@ -95,16 +108,41 @@ def tier1_scan(video_path):
 
         fg_mog2 = bg_mog2.apply(blurred)
         fg_knn = bg_knn.apply(blurred)
-        fg_mog2 = (fg_mog2 == 255).astype(np.uint8) * 255
-        fg_knn = (fg_knn == 255).astype(np.uint8) * 255
+        fg_mog2 = (fg_mog2 == 255).astype(np.uint8)
+        fg_knn = (fg_knn == 255).astype(np.uint8)
 
         fg_union = cv2.bitwise_or(fg_mog2, fg_knn)
-        fg_union = cv2.morphologyEx(fg_union, cv2.MORPH_OPEN, kernel)
-        fg_union = cv2.morphologyEx(fg_union, cv2.MORPH_CLOSE, kernel)
+        fg_clean = cv2.morphologyEx(fg_union, cv2.MORPH_OPEN, kernel)
+        fg_clean = cv2.morphologyEx(fg_clean, cv2.MORPH_CLOSE, kernel)
 
-        fg_pixels = np.count_nonzero(fg_union)
         time_sec = frame_idx / native_fps
+
+        # Build static mask from first STATIC_MASK_FRAMES post-warmup frames
+        if n_frames >= WARMUP_FRAMES and n_mask_frames < STATIC_MASK_FRAMES:
+            if fg_accumulator is None:
+                fg_accumulator = fg_clean.astype(np.float32)
+            else:
+                fg_accumulator += fg_clean.astype(np.float32)
+            n_mask_frames += 1
+
+            # Finalize mask once we have enough frames
+            if n_mask_frames == STATIC_MASK_FRAMES:
+                static_mask = (fg_accumulator / n_mask_frames
+                               > STATIC_MASK_THRESHOLD).astype(np.uint8)
+                static_px = np.count_nonzero(static_mask)
+                print(f"    [T1-scan] Static mask built: {static_px} pixels "
+                      f"({100*static_px/static_mask.size:.1f}% of frame)")
+                del fg_accumulator  # free memory
+
+        # Apply static mask if available
+        if static_mask is not None:
+            fg_final = cv2.bitwise_and(fg_clean, cv2.bitwise_not(static_mask))
+        else:
+            fg_final = fg_clean
+
+        fg_pixels = np.count_nonzero(fg_final)
         scan_results.append((frame_idx, time_sec, fg_pixels))
+        n_frames += 1
         frame_idx += frame_interval
 
     cap.release()
