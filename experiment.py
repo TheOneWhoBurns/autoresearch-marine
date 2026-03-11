@@ -375,6 +375,21 @@ def train_cnn_classifier(segments, pseudo_labels):
         return 0.5 * (1 + np.cos(np.pi * (epoch - warmup_epochs) / (n_epochs - warmup_epochs)))
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
+    def spec_augment(batch, freq_mask_param=20, time_mask_param=30):
+        """SpecAugment-style data augmentation."""
+        b, c, f, t = batch.shape
+        augmented = batch.clone()
+        for idx in range(b):
+            # Frequency mask
+            f_start = torch.randint(0, max(1, f - freq_mask_param), (1,)).item()
+            f_width = torch.randint(0, freq_mask_param + 1, (1,)).item()
+            augmented[idx, :, f_start:f_start+f_width, :] = 0
+            # Time mask
+            t_start = torch.randint(0, max(1, t - time_mask_param), (1,)).item()
+            t_width = torch.randint(0, time_mask_param + 1, (1,)).item()
+            augmented[idx, :, :, t_start:t_start+t_width] = 0
+        return augmented
+
     model.train()
     for epoch in range(n_epochs):
         perm = torch.randperm(n)
@@ -384,6 +399,7 @@ def train_cnn_classifier(segments, pseudo_labels):
         for i in range(0, n, batch_size):
             batch_x = X_tensor[perm[i:i+batch_size]].to(device)
             batch_y = y_tensor[perm[i:i+batch_size]].to(device)
+            batch_x = spec_augment(batch_x)
             logits, _ = model(batch_x)
             loss = criterion(logits, batch_y)
             optimizer.zero_grad()
