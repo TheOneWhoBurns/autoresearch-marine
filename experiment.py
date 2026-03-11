@@ -336,6 +336,8 @@ def train_cnn_classifier(segments, pseudo_labels):
                 nn.Conv2d(16, 32, 3, stride=2, padding=1), nn.ReLU(), nn.BatchNorm2d(32),
                 nn.Dropout2d(0.1),
                 nn.Conv2d(32, 64, 3, stride=2, padding=1), nn.ReLU(), nn.BatchNorm2d(64),
+                nn.Dropout2d(0.15),
+                nn.Conv2d(64, 128, 3, stride=2, padding=1), nn.ReLU(), nn.BatchNorm2d(128),
                 nn.Dropout2d(0.2),
             )
             dummy = torch.zeros(1, 1, n_mels, time_dim)
