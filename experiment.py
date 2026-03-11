@@ -364,7 +364,7 @@ def train_cnn_classifier(segments, pseudo_labels):
     X_tensor = torch.from_numpy(X[:, np.newaxis, :, :])
     y_tensor = torch.from_numpy(y.astype(np.int64))
 
-    batch_size = 64
+    batch_size = 32
     n = len(X_tensor)
     n_epochs = 400
 
