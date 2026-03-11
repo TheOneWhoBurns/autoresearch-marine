@@ -8,24 +8,37 @@ from prepare import (
     DEVICE, TIME_BUDGET, RESULTS_DIR, NATIVE_FPS,
     TARGET_SPECIES_GENUS, TARGET_SPECIES_NAME,
     build_dataset, evaluate_maxn_predictions, print_evaluation,
-    extract_frames_at_fps, find_available_videos,
+    find_available_videos,
     parse_series_id, parse_subvideo_index,
 )
 
 TIER = 1
 
-SAMPLE_FPS = 2
-MOG2_HISTORY = 300
-MOG2_VAR_THRESHOLD = 25
+SAMPLE_FPS = 1
+MOG2_HISTORY = 200
+MOG2_VAR_THRESHOLD = 40
 MOG2_DETECT_SHADOWS = True
-MIN_CONTOUR_AREA = 50
+MIN_CONTOUR_AREA = 100
 MORPH_KERNEL_SIZE = 3
-BLUR_SIZE = 3
-SINGLE_FISH_AREA = 150
+BLUR_SIZE = 5
+SINGLE_FISH_AREA = 350
+SCALE_FACTOR = 0.5
+WARMUP_FRAMES = 20
 
 
-def count_fish_area_density(video_path, sample_fps=SAMPLE_FPS):
+def count_fish_mog2(video_path):
     import cv2
+
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        return 0, []
+
+    native_fps = cap.get(cv2.CAP_PROP_FPS)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    frame_interval = max(1, int(native_fps / SAMPLE_FPS))
+
+    print(f"  Video: {Path(video_path).name}, {native_fps:.1f}fps, "
+          f"{total_frames} frames, interval={frame_interval}")
 
     bg_sub = cv2.createBackgroundSubtractorMOG2(
         history=MOG2_HISTORY,
@@ -33,17 +46,26 @@ def count_fish_area_density(video_path, sample_fps=SAMPLE_FPS):
         detectShadows=MOG2_DETECT_SHADOWS,
     )
 
-    kernel = cv2.getStructuringElement(
-        cv2.MORPH_ELLIPSE, (MORPH_KERNEL_SIZE, MORPH_KERNEL_SIZE)
-    )
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (MORPH_KERNEL_SIZE, MORPH_KERNEL_SIZE))
+    sf2 = SCALE_FACTOR * SCALE_FACTOR
+    scaled_min_area = int(MIN_CONTOUR_AREA * sf2)
+    scaled_fish_area = SINGLE_FISH_AREA * sf2
 
     frame_counts = []
+    frame_idx = 0
     max_count = 0
 
-    for time_sec, frame in extract_frames_at_fps(video_path, sample_fps):
+    while frame_idx < total_frames:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        if SCALE_FACTOR < 1.0:
+            frame = cv2.resize(frame, None, fx=SCALE_FACTOR, fy=SCALE_FACTOR)
+
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         blurred = cv2.GaussianBlur(gray, (BLUR_SIZE, BLUR_SIZE), 0)
-
         fg_mask = bg_sub.apply(blurred)
 
         if MOG2_DETECT_SHADOWS:
@@ -57,13 +79,19 @@ def count_fish_area_density(video_path, sample_fps=SAMPLE_FPS):
         count = 0
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area >= MIN_CONTOUR_AREA:
-                fish_in_blob = max(1, int(round(area / SINGLE_FISH_AREA)))
+            if area >= scaled_min_area:
+                fish_in_blob = max(1, int(round(area / scaled_fish_area)))
                 count += fish_in_blob
 
+        time_sec = frame_idx / native_fps
         frame_counts.append((time_sec, count))
-        if count > max_count:
+        if len(frame_counts) > WARMUP_FRAMES and count > max_count:
             max_count = count
+
+        frame_idx += frame_interval
+
+    cap.release()
+    print(f"  Processed {len(frame_counts)} frames")
 
     return max_count, frame_counts
 
@@ -77,12 +105,9 @@ def main():
 
     config = {
         "tier": TIER,
-        "method": "area_density_mog2",
+        "method": "mog2_scaled",
         "sample_fps": SAMPLE_FPS,
-        "mog2_history": MOG2_HISTORY,
-        "mog2_var_threshold": MOG2_VAR_THRESHOLD,
-        "min_contour_area": MIN_CONTOUR_AREA,
-        "morph_kernel_size": MORPH_KERNEL_SIZE,
+        "scale_factor": SCALE_FACTOR,
         "single_fish_area": SINGLE_FISH_AREA,
     }
     print(f"\nConfig: {json.dumps(config, indent=2)}")
@@ -100,8 +125,7 @@ def main():
         print("ERROR: No video files found in data/videos/")
         return
 
-    t_load = time.time() - t_start
-    print(f"Data loaded: {t_load:.1f}s")
+    print(f"Data loaded: {time.time() - t_start:.1f}s")
 
     print("\n--- Processing videos ---")
     pred_maxn = {}
@@ -115,12 +139,9 @@ def main():
 
         print(f"\n  Processing: {video_name}")
         t1 = time.time()
-
-        max_count, frame_counts = count_fish_area_density(video_path)
-
+        max_count, frame_counts = count_fish_mog2(video_path)
         pred_maxn[video_name] = max_count
         print(f"  MaxN prediction: {max_count} ({time.time()-t1:.1f}s)")
-        print(f"  Frames processed: {len(frame_counts)}")
 
         if frame_counts:
             counts = [c for _, c in frame_counts]
@@ -146,7 +167,7 @@ def main():
     print(f"correlation:      {eval_result.get('correlation', 0.0):.4f}")
     print(f"n_videos:         {eval_result.get('n_videos', 0)}")
     print(f"tier:             {TIER}")
-    print(f"method:           area_density_mog2")
+    print(f"method:           mog2_scaled")
     print(f"total_seconds:    {t_total:.1f}")
     print(f"device:           {DEVICE}")
 
