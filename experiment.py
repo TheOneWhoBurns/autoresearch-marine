@@ -215,10 +215,14 @@ def _yolo_detect_frame(model, frame):
 
 
 def calibrate_ppf(video_path, scan_results):
-    """Calibrate pixels-per-fish using YOLO on medium-activity frames.
+    """Calibrate pixels-per-fish using YOLO on sampled frames.
 
-    Strategy: find frames where YOLO detects 5-50 fish (reliable range),
-    then PPF = fg_pixels / yolo_count. Use median across calibration frames.
+    Strategy:
+    1. Sample frames from across the activity spectrum (20th-90th percentile)
+    2. Run YOLO on each, compute PPF = fg_pixels / yolo_count
+    3. Use 25th percentile of PPF samples (least occluded = best calibration)
+
+    Falls back to DEFAULT_PPF if not enough calibration samples.
     """
     try:
         import cv2
@@ -230,17 +234,14 @@ def calibrate_ppf(video_path, scan_results):
     if len(scan_results) <= WARMUP_FRAMES:
         return DEFAULT_PPF
 
-    # Sort frames by fg_pixels (ascending) and sample from a wide range
-    # Include lower-activity frames (where fish are more separated = better calibration)
     after_warmup = scan_results[WARMUP_FRAMES:]
     sorted_by_px = sorted(after_warmup, key=lambda x: x[2])
 
-    # Take frames from the 20th-80th percentile of activity
-    # Lower bound is 20% (need some fish), upper is 80% (avoid densest frames)
+    # Sample from top half of activity (need some foreground pixels to calibrate)
+    # For sparse videos, this captures the only frames with fish
     n = len(sorted_by_px)
-    p20_idx = int(n * 0.2)
-    p80_idx = int(n * 0.8)
-    candidate_frames = sorted_by_px[p20_idx:p80_idx]
+    lo = int(n * 0.5)
+    candidate_frames = sorted_by_px[lo:]
 
     # Evenly sample CALIB_N_FRAMES from candidates
     if len(candidate_frames) <= CALIB_N_FRAMES:
@@ -274,8 +275,6 @@ def calibrate_ppf(video_path, scan_results):
     cap.release()
 
     if len(ppf_samples) >= CALIB_MIN_SAMPLES:
-        # Use 25th percentile — lower PPF values come from least-occluded frames
-        # where YOLO detection is most complete (best calibration quality)
         adaptive_ppf = float(np.percentile(ppf_samples, CALIB_PERCENTILE))
         print(f"    [Calib] Adaptive PPF: {adaptive_ppf:.1f} "
               f"(p{CALIB_PERCENTILE} of {len(ppf_samples)} samples, "
