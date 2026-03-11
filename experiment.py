@@ -148,21 +148,29 @@ def get_peak_frame_indices(frame_counts, n_peaks=10):
     return selected
 
 
+_yolo_model = None
+
+def _get_yolo_model():
+    """Load YOLOv8n once, reuse across videos."""
+    global _yolo_model
+    if _yolo_model is None:
+        from ultralytics import YOLO
+        print("    [T2] Loading YOLOv8n...")
+        _yolo_model = YOLO("yolov8n.pt")
+    return _yolo_model
+
+
 def tier2_yolo_count(video_path, peak_frames):
     """Tier 2: Run YOLOv8 on peak frames identified by Tier 1."""
     if not peak_frames:
         return 0
 
     try:
-        from ultralytics import YOLO
         import cv2
+        model = _get_yolo_model()
     except ImportError:
         print("    [T2] ultralytics not available, skipping")
         return None
-
-    # Use YOLOv8 nano for speed — pretrained on COCO
-    print(f"    [T2] Loading YOLOv8n...")
-    model = YOLO("yolov8n.pt")
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
