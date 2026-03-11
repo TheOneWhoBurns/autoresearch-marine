@@ -52,7 +52,7 @@ USE_PANNS_LABELS = True
 # Dimensionality reduction
 REDUCER = "umap"
 N_COMPONENTS = 20
-UMAP_N_NEIGHBORS = 10
+UMAP_N_NEIGHBORS = 15
 UMAP_MIN_DIST = 0.0
 UMAP_METRIC = "euclidean"
 
