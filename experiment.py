@@ -17,17 +17,14 @@ TIER = 1
 SAMPLE_FPS = 1
 SCALE_FACTOR = 0.5
 
-MOG2_HISTORY = 500
-MOG2_VAR_THRESHOLD = 64
+MOG2_HISTORY = 300
+MOG2_VAR_THRESHOLD = 30
 MOG2_DETECT_SHADOWS = True
-MIN_CONTOUR_AREA = 150
-MORPH_KERNEL_SIZE = 5
-BLUR_SIZE = 7
-WARMUP_FRAMES = 30
-SINGLE_FISH_AREA = 400
-MAX_FISH_PER_BLOB = 30
+MORPH_KERNEL_SIZE = 3
+BLUR_SIZE = 5
+WARMUP_FRAMES = 20
 
-PERCENTILE = 95
+PIXELS_PER_FISH = 46.0
 
 
 def count_fish_mog2(video_path):
@@ -51,9 +48,6 @@ def count_fish_mog2(video_path):
     )
 
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (MORPH_KERNEL_SIZE, MORPH_KERNEL_SIZE))
-    sf2 = SCALE_FACTOR * SCALE_FACTOR
-    scaled_min = int(MIN_CONTOUR_AREA * sf2)
-    scaled_fish = SINGLE_FISH_AREA * sf2
 
     frame_counts = []
     frame_idx = 0
@@ -74,14 +68,8 @@ def count_fish_mog2(video_path):
         fg_mask = cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN, kernel)
         fg_mask = cv2.morphologyEx(fg_mask, cv2.MORPH_CLOSE, kernel)
 
-        contours, _ = cv2.findContours(fg_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        count = 0
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if area < scaled_min:
-                continue
-            fish_in_blob = min(MAX_FISH_PER_BLOB, max(1, int(round(area / scaled_fish))))
-            count += fish_in_blob
+        fg_pixels = np.count_nonzero(fg_mask)
+        count = fg_pixels / PIXELS_PER_FISH
 
         time_sec = frame_idx / native_fps
         frame_counts.append((time_sec, count))
@@ -93,8 +81,14 @@ def count_fish_mog2(video_path):
     if len(frame_counts) <= WARMUP_FRAMES:
         return 0, frame_counts
 
-    counts_after_warmup = [c for _, c in frame_counts[WARMUP_FRAMES:]]
-    maxn = int(np.percentile(counts_after_warmup, PERCENTILE))
+    counts = np.array([c for _, c in frame_counts[WARMUP_FRAMES:]])
+    p99 = np.percentile(counts, 99)
+    maxn = int(round(p99))
+
+    raw_max = counts.max()
+    p95 = np.percentile(counts, 95)
+    mean_c = np.mean(counts)
+    print(f"  FG pixel method: p99={p99:.0f}, max={raw_max:.0f}, p95={p95:.0f}, mean={mean_c:.1f}")
     return maxn, frame_counts
 
 
@@ -107,16 +101,13 @@ def main():
 
     config = {
         "tier": TIER,
-        "method": "mog2_area_density_capped",
+        "method": "mog2_fg_pixel_density",
         "sample_fps": SAMPLE_FPS,
         "scale_factor": SCALE_FACTOR,
         "mog2_history": MOG2_HISTORY,
         "mog2_var_threshold": MOG2_VAR_THRESHOLD,
-        "min_contour_area": MIN_CONTOUR_AREA,
-        "single_fish_area": SINGLE_FISH_AREA,
-        "max_fish_per_blob": MAX_FISH_PER_BLOB,
         "morph_kernel": MORPH_KERNEL_SIZE,
-        "percentile": PERCENTILE,
+        "pixels_per_fish": PIXELS_PER_FISH,
     }
     print(f"\nConfig: {json.dumps(config, indent=2)}")
 
@@ -138,7 +129,12 @@ def main():
     print("\n--- Processing videos ---")
     pred_maxn = {}
 
-    for video_path in available_videos:
+    labeled_only = set(true_maxn.keys())
+    scored_videos = [v for v in available_videos if Path(v).name in labeled_only]
+    other_videos = [v for v in available_videos if Path(v).name not in labeled_only]
+    ordered = scored_videos + other_videos
+
+    for video_path in ordered:
         video_name = Path(video_path).name
         elapsed = time.time() - t_start
         if elapsed > TIME_BUDGET - 30:
@@ -154,8 +150,7 @@ def main():
         if frame_counts:
             counts = [c for _, c in frame_counts]
             print(f"  Count stats: mean={np.mean(counts):.1f}, "
-                  f"max={np.max(counts)}, p{PERCENTILE}={np.percentile(counts, PERCENTILE):.0f}, "
-                  f"std={np.std(counts):.1f}")
+                  f"max={np.max(counts):.0f}, std={np.std(counts):.1f}")
 
     print("\n--- Evaluation ---")
     eval_result = evaluate_maxn_predictions(pred_maxn, true_maxn)
@@ -176,7 +171,7 @@ def main():
     print(f"correlation:      {eval_result.get('correlation', 0.0):.4f}")
     print(f"n_videos:         {eval_result.get('n_videos', 0)}")
     print(f"tier:             {TIER}")
-    print(f"method:           mog2_area_density_capped")
+    print(f"method:           mog2_fg_pixel_density")
     print(f"total_seconds:    {t_total:.1f}")
     print(f"device:           {DEVICE}")
 
