@@ -1,10 +1,11 @@
 """
-Multi-tier BRUV fish counting experiment.
+Multi-tier BRUV fish counting with adaptive pixel-per-fish calibration.
 
-Tier 1: Dual BG subtraction (MOG2+KNN) with pixel density — finds peak activity windows
-Tier 2: YOLOv8 detection on peak frames — individual fish counting
-Tier 3: Claude VLM counting on peak frames — zero-shot visual counting
-Ensemble: weighted combination of all tiers
+Instead of hardcoded PIXELS_PER_FISH, we calibrate per-video:
+1. Scan video with dual BG subtraction to get raw foreground pixel counts
+2. Run YOLO on medium-activity frames where detection is reliable (5-30 fish)
+3. Compute PPF = median(fg_pixels / yolo_count) — self-calibrating
+4. Apply calibrated PPF to convert pixel counts → fish counts → MaxN
 """
 
 import os
@@ -23,7 +24,7 @@ from prepare import (
 
 TIER = 3
 
-# --- Tier 1 config (existing, proven) ---
+# --- BG subtraction config ---
 SAMPLE_FPS = 1
 SCALE_FACTOR = 0.5
 MOG2_HISTORY = 300
@@ -34,34 +35,39 @@ BLUR_SIZE = 5
 WARMUP_FRAMES = 20
 KNN_HISTORY = 200
 KNN_DIST_THRESHOLD = 400.0
-PIXELS_PER_FISH = 46.0
+DEFAULT_PPF = 46.0  # fallback if calibration fails
 SUSTAINED_WINDOW = 5
-SUSTAINED_FLOOR = 0.96  # MaxN >= 96% of peak sustained count
 
-# --- Tier 2 config ---
-YOLO_CONF = 0.01  # very low conf — "kite" class acts as fish proxy
+# --- YOLO config ---
+YOLO_CONF = 0.01
 YOLO_IOU = 0.3
 YOLO_IMG_SIZE = 1280
-YOLO_FISH_CLASSES = {"kite", "bird"}  # COCO classes that match fish shapes
+YOLO_FISH_CLASSES = {"kite", "bird"}
 N_PEAK_FRAMES = 10
 
-# --- Tier 3 config ---
-VLM_N_FRAMES = 3  # number of frames to send to Claude
+# --- Calibration config ---
+CALIB_MIN_DETECTIONS = 5   # min YOLO detections for a frame to be useful
+CALIB_MAX_DETECTIONS = 50  # max — above this, occlusion makes detection unreliable
+CALIB_N_FRAMES = 20        # number of frames to sample for calibration
+CALIB_MIN_SAMPLES = 3      # need at least this many calibration frames
+
+# --- VLM config ---
+VLM_N_FRAMES = 3
 
 
-def tier1_count(video_path):
-    """Tier 1: Dual background subtraction with pixel density counting."""
+def tier1_scan(video_path):
+    """Scan video with dual BG subtraction. Returns raw foreground pixel counts."""
     import cv2
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        return 0, []
+        return []
 
     native_fps = cap.get(cv2.CAP_PROP_FPS)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     frame_interval = max(1, int(native_fps / SAMPLE_FPS))
 
-    print(f"    [T1] {Path(video_path).name}: {native_fps:.1f}fps, "
+    print(f"    [T1-scan] {Path(video_path).name}: {native_fps:.1f}fps, "
           f"{total_frames} frames, interval={frame_interval}")
 
     bg_mog2 = cv2.createBackgroundSubtractorMOG2(
@@ -74,7 +80,7 @@ def tier1_count(video_path):
     kernel = cv2.getStructuringElement(
         cv2.MORPH_ELLIPSE, (MORPH_KERNEL_SIZE, MORPH_KERNEL_SIZE))
 
-    frame_counts = []
+    scan_results = []
     frame_idx = 0
 
     while frame_idx < total_frames:
@@ -97,18 +103,20 @@ def tier1_count(video_path):
         fg_union = cv2.morphologyEx(fg_union, cv2.MORPH_CLOSE, kernel)
 
         fg_pixels = np.count_nonzero(fg_union)
-        count = fg_pixels / PIXELS_PER_FISH
-
         time_sec = frame_idx / native_fps
-        frame_counts.append((frame_idx, time_sec, count))
+        scan_results.append((frame_idx, time_sec, fg_pixels))
         frame_idx += frame_interval
 
     cap.release()
+    return scan_results
 
-    if len(frame_counts) <= WARMUP_FRAMES:
-        return 0, frame_counts
 
-    counts = np.array([c for _, _, c in frame_counts[WARMUP_FRAMES:]])
+def tier1_aggregate(scan_results, ppf):
+    """Convert raw pixel counts to fish counts and compute MaxN."""
+    if len(scan_results) <= WARMUP_FRAMES:
+        return 0
+
+    counts = np.array([px / ppf for _, _, px in scan_results[WARMUP_FRAMES:]])
 
     if len(counts) >= SUSTAINED_WINDOW:
         windowed = np.convolve(
@@ -119,33 +127,11 @@ def tier1_count(video_path):
 
     p99 = np.percentile(counts, 99)
     blend = int(round(0.45 * p99 + 0.55 * sustained_max))
-    floor = int(round(sustained_max * SUSTAINED_FLOOR))
-    maxn = max(blend, floor)
+    maxn = blend
 
-    print(f"    [T1] p99={p99:.0f}, sustained_max={sustained_max:.0f}, "
-          f"blend={blend}, floor={floor}, maxn={maxn}")
-    return maxn, frame_counts
-
-
-def get_peak_frame_indices(frame_counts, n_peaks=10):
-    """Get frame indices with highest counts from Tier 1."""
-    if not frame_counts:
-        return []
-    # Skip warmup, sort by count descending
-    after_warmup = frame_counts[WARMUP_FRAMES:]
-    sorted_frames = sorted(after_warmup, key=lambda x: x[2], reverse=True)
-    # Return top N frame indices, spaced at least 5 frames apart
-    selected = []
-    selected_times = []
-    for frame_idx, time_sec, count in sorted_frames:
-        if len(selected) >= n_peaks:
-            break
-        # Ensure frames are at least 2 seconds apart
-        if any(abs(time_sec - t) < 2.0 for t in selected_times):
-            continue
-        selected.append((frame_idx, time_sec, count))
-        selected_times.append(time_sec)
-    return selected
+    print(f"    [T1-agg] ppf={ppf:.1f}, p99={p99:.0f}, "
+          f"sustained_max={sustained_max:.0f}, maxn={maxn}")
+    return maxn
 
 
 _yolo_model = None
@@ -155,13 +141,117 @@ def _get_yolo_model():
     global _yolo_model
     if _yolo_model is None:
         from ultralytics import YOLO
-        print("    [T2] Loading YOLOv8n...")
+        print("    [YOLO] Loading YOLOv8n...")
         _yolo_model = YOLO("yolov8n.pt")
     return _yolo_model
 
 
+def _yolo_detect_frame(model, frame):
+    """Run YOLO on a single frame, return fish-like detection count."""
+    results = model(frame, conf=YOLO_CONF, iou=YOLO_IOU,
+                    imgsz=YOLO_IMG_SIZE, verbose=False)
+    n_detections = 0
+    if results and len(results) > 0:
+        boxes = results[0].boxes
+        if boxes is not None and len(boxes) > 0:
+            for cls_id in boxes.cls.cpu().numpy().astype(int):
+                cls_name = model.names[int(cls_id)]
+                if cls_name in YOLO_FISH_CLASSES:
+                    n_detections += 1
+    return n_detections
+
+
+def calibrate_ppf(video_path, scan_results):
+    """Calibrate pixels-per-fish using YOLO on medium-activity frames.
+
+    Strategy: find frames where YOLO detects 5-50 fish (reliable range),
+    then PPF = fg_pixels / yolo_count. Use median across calibration frames.
+    """
+    try:
+        import cv2
+        model = _get_yolo_model()
+    except ImportError:
+        print("    [Calib] YOLO not available, using default PPF")
+        return DEFAULT_PPF
+
+    if len(scan_results) <= WARMUP_FRAMES:
+        return DEFAULT_PPF
+
+    # Sort frames by fg_pixels (ascending) and sample from middle range
+    # We want medium-activity frames, not peaks (too dense) or quiet (too sparse)
+    after_warmup = scan_results[WARMUP_FRAMES:]
+    sorted_by_px = sorted(after_warmup, key=lambda x: x[2])
+
+    # Take frames from the 40th-80th percentile of activity
+    n = len(sorted_by_px)
+    p40_idx = int(n * 0.4)
+    p80_idx = int(n * 0.8)
+    candidate_frames = sorted_by_px[p40_idx:p80_idx]
+
+    # Evenly sample CALIB_N_FRAMES from candidates
+    if len(candidate_frames) <= CALIB_N_FRAMES:
+        sample_frames = candidate_frames
+    else:
+        step = len(candidate_frames) / CALIB_N_FRAMES
+        sample_frames = [candidate_frames[int(i * step)] for i in range(CALIB_N_FRAMES)]
+
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        return DEFAULT_PPF
+
+    ppf_samples = []
+    for frame_idx, time_sec, fg_pixels in sample_frames:
+        if fg_pixels < 50:  # too few pixels to calibrate
+            continue
+
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        ret, frame = cap.read()
+        if not ret:
+            continue
+
+        n_det = _yolo_detect_frame(model, frame)
+
+        if CALIB_MIN_DETECTIONS <= n_det <= CALIB_MAX_DETECTIONS:
+            sample_ppf = fg_pixels / n_det
+            ppf_samples.append(sample_ppf)
+            print(f"    [Calib] frame {frame_idx} t={time_sec:.1f}s: "
+                  f"fg_px={fg_pixels}, yolo={n_det}, ppf={sample_ppf:.1f}")
+
+    cap.release()
+
+    if len(ppf_samples) >= CALIB_MIN_SAMPLES:
+        adaptive_ppf = float(np.median(ppf_samples))
+        print(f"    [Calib] Adaptive PPF: {adaptive_ppf:.1f} "
+              f"(from {len(ppf_samples)} samples, "
+              f"range={min(ppf_samples):.1f}-{max(ppf_samples):.1f})")
+        return adaptive_ppf
+    else:
+        print(f"    [Calib] Only {len(ppf_samples)} samples, using default PPF={DEFAULT_PPF}")
+        return DEFAULT_PPF
+
+
+def get_peak_frame_indices(scan_results, ppf, n_peaks=10):
+    """Get frame indices with highest estimated counts."""
+    if not scan_results:
+        return []
+    after_warmup = scan_results[WARMUP_FRAMES:]
+    # Convert to estimated fish counts for ranking
+    with_counts = [(idx, t, px / ppf) for idx, t, px in after_warmup]
+    sorted_frames = sorted(with_counts, key=lambda x: x[2], reverse=True)
+    selected = []
+    selected_times = []
+    for frame_idx, time_sec, count in sorted_frames:
+        if len(selected) >= n_peaks:
+            break
+        if any(abs(time_sec - t) < 2.0 for t in selected_times):
+            continue
+        selected.append((frame_idx, time_sec, count))
+        selected_times.append(time_sec)
+    return selected
+
+
 def tier2_yolo_count(video_path, peak_frames):
-    """Tier 2: Run YOLOv8 on peak frames identified by Tier 1."""
+    """Tier 2: Run YOLOv8 on peak frames for direct detection count."""
     if not peak_frames:
         return 0
 
@@ -169,53 +259,29 @@ def tier2_yolo_count(video_path, peak_frames):
         import cv2
         model = _get_yolo_model()
     except ImportError:
-        print("    [T2] ultralytics not available, skipping")
+        print("    [T2] YOLO not available, skipping")
         return None
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         return None
 
-    frame_detections = []
-
+    max_det = 0
     for frame_idx, time_sec, t1_count in peak_frames:
         cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
         ret, frame = cap.read()
         if not ret:
             continue
 
-        # Run YOLO detection — look for any animal-like detections
-        results = model(frame, conf=YOLO_CONF, iou=YOLO_IOU,
-                        imgsz=YOLO_IMG_SIZE, verbose=False)
-
-        # Filter for fish-like COCO classes (kite=33, bird=14 match fish shapes)
-        n_detections = 0
-        if results and len(results) > 0:
-            boxes = results[0].boxes
-            if boxes is not None and len(boxes) > 0:
-                for cls_id in boxes.cls.cpu().numpy().astype(int):
-                    cls_name = model.names[int(cls_id)]
-                    if cls_name in YOLO_FISH_CLASSES:
-                        n_detections += 1
-
-        frame_detections.append({
-            'frame_idx': frame_idx,
-            'time_sec': time_sec,
-            't1_count': t1_count,
-            'yolo_count': n_detections,
-        })
+        n_det = _yolo_detect_frame(model, frame)
+        max_det = max(max_det, n_det)
         print(f"    [T2] frame {frame_idx} t={time_sec:.1f}s: "
-              f"yolo={n_detections}, t1={t1_count:.0f}")
+              f"yolo={n_det}, t1={t1_count:.0f}")
 
     cap.release()
 
-    if not frame_detections:
-        return None
-
-    # MaxN from YOLO: take the max detection count across peak frames
-    yolo_maxn = max(d['yolo_count'] for d in frame_detections)
-    print(f"    [T2] YOLO MaxN: {yolo_maxn}")
-    return yolo_maxn
+    print(f"    [T2] YOLO MaxN: {max_det}")
+    return max_det if max_det > 0 else None
 
 
 def tier3_vlm_count(video_path, peak_frames):
@@ -238,7 +304,6 @@ def tier3_vlm_count(video_path, peak_frames):
         return None
 
     vlm_counts = []
-    # Use top N peak frames
     frames_to_send = peak_frames[:VLM_N_FRAMES]
 
     for frame_idx, time_sec, t1_count in frames_to_send:
@@ -247,7 +312,6 @@ def tier3_vlm_count(video_path, peak_frames):
         if not ret:
             continue
 
-        # Encode frame as JPEG
         _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
         img_b64 = base64.standard_b64encode(buffer).decode('utf-8')
 
@@ -280,7 +344,6 @@ def tier3_vlm_count(video_path, peak_frames):
                 }],
             )
             count_str = response.content[0].text.strip()
-            # Extract integer from response
             count = int(''.join(c for c in count_str if c.isdigit()) or '0')
             vlm_counts.append(count)
             print(f"    [T3] frame {frame_idx} t={time_sec:.1f}s: "
@@ -300,13 +363,7 @@ def tier3_vlm_count(video_path, peak_frames):
 
 
 def ensemble_maxn(t1_maxn, t2_maxn, t3_maxn):
-    """Combine tier predictions into final MaxN estimate.
-
-    T1 (pixel density) is the primary predictor — proven reliable.
-    T2 (YOLO) and T3 (Claude VLM) provide secondary signals:
-    - Used as sanity checks and logged for analysis
-    - Only override T1 if they strongly agree on a different estimate
-    """
+    """Combine tier predictions. T1 is primary, T2/T3 are secondary signals."""
     t1 = t1_maxn if t1_maxn is not None else 0
     t2 = t2_maxn if t2_maxn is not None else 0
     t3 = t3_maxn if t3_maxn is not None else 0
@@ -316,26 +373,19 @@ def ensemble_maxn(t1_maxn, t2_maxn, t3_maxn):
     if t1 == 0 and t2 == 0 and t3 == 0:
         return 0
 
-    # T1 is the default prediction
     final = t1
 
-    # If Claude VLM is available, it gets moderate influence
+    # VLM blend
     if t3 > 0 and t1 > 0:
-        # VLM is good at counting visible fish — blend lightly
         final = int(round(0.7 * t1 + 0.3 * t3))
         print(f"    [Ensemble] T1+T3 blend: 0.7*{t1} + 0.3*{t3} = {final}")
 
-    # YOLO: only useful in sparse scenes where T1 might undercount
-    # In dense scenes (T1 > 2.5 * T2), YOLO is clearly failing
+    # YOLO: only in sparse scenes where T1 might undercount
     if t2 > 0 and t1 > 0 and t1 <= 2.5 * t2:
-        # Sparse scene — YOLO can help slightly
-        # Apply miss-rate correction (~30% for underwater BRUV)
         yolo_corrected = int(round(t2 * 1.30))
-        # Only nudge final if YOLO corrected is higher (undercounting fix)
         if yolo_corrected > final:
             nudge = int(round(0.8 * final + 0.2 * yolo_corrected))
-            print(f"    [Ensemble] YOLO nudge: yolo_raw={t2}, corrected={yolo_corrected}, "
-                  f"nudge {final}->{nudge}")
+            print(f"    [Ensemble] YOLO nudge: {final}->{nudge}")
             final = nudge
 
     print(f"    [Ensemble] final={final}")
@@ -343,25 +393,40 @@ def ensemble_maxn(t1_maxn, t2_maxn, t3_maxn):
 
 
 def process_video(video_path, t_start):
-    """Run all available tiers on a single video."""
+    """Process one video: scan → calibrate → aggregate → ensemble."""
     video_name = Path(video_path).name
     print(f"\n  === {video_name} ===")
 
-    # Tier 1: Background subtraction (always runs)
+    # Phase 1: BG subtraction scan (raw pixel counts)
     t1 = time.time()
-    t1_maxn, frame_counts = tier1_count(video_path)
-    print(f"    [T1] completed in {time.time()-t1:.1f}s, maxn={t1_maxn}")
+    scan_results = tier1_scan(video_path)
+    print(f"    [T1-scan] completed in {time.time()-t1:.1f}s, {len(scan_results)} frames")
 
-    # If Tier 1 says ~0, skip higher tiers (no fish)
+    if len(scan_results) <= WARMUP_FRAMES:
+        return 0
+
+    # Phase 2: Calibrate PPF using YOLO on medium-activity frames
+    elapsed = time.time() - t_start
+    if elapsed < TIME_BUDGET - 60:
+        t_cal = time.time()
+        ppf = calibrate_ppf(video_path, scan_results)
+        print(f"    [Calib] completed in {time.time()-t_cal:.1f}s")
+    else:
+        ppf = DEFAULT_PPF
+        print(f"    [Calib] skipped (time budget), using default PPF={ppf}")
+
+    # Phase 3: Aggregate with calibrated PPF
+    t1_maxn = tier1_aggregate(scan_results, ppf)
+
     if t1_maxn < 5:
         print(f"    Skipping T2/T3 (T1 count too low)")
         return t1_maxn
 
-    # Get peak frames for Tier 2 & 3
-    peak_frames = get_peak_frame_indices(frame_counts, N_PEAK_FRAMES)
+    # Phase 4: Peak frames for T2/T3
+    peak_frames = get_peak_frame_indices(scan_results, ppf, N_PEAK_FRAMES)
     print(f"    Peak frames: {len(peak_frames)} selected")
 
-    # Tier 2: YOLO detection on peak frames (fast: ~3s per video)
+    # Phase 5: YOLO on peaks (direct count)
     elapsed = time.time() - t_start
     t2_maxn = None
     if elapsed < TIME_BUDGET - 20:
@@ -369,7 +434,7 @@ def process_video(video_path, t_start):
         t2_maxn = tier2_yolo_count(video_path, peak_frames)
         print(f"    [T2] completed in {time.time()-t2:.1f}s")
 
-    # Tier 3: Claude VLM on top peak frames
+    # Phase 6: VLM on peaks
     elapsed = time.time() - t_start
     t3_maxn = None
     if elapsed < TIME_BUDGET - 20:
@@ -377,26 +442,26 @@ def process_video(video_path, t_start):
         t3_maxn = tier3_vlm_count(video_path, peak_frames)
         print(f"    [T3] completed in {time.time()-t3:.1f}s")
 
-    # Ensemble
+    # Phase 7: Ensemble
     final = ensemble_maxn(t1_maxn, t2_maxn, t3_maxn)
-    print(f"    Final MaxN: {final} (T1={t1_maxn}, T2={t2_maxn}, T3={t3_maxn})")
+    print(f"    Final MaxN: {final} (T1={t1_maxn}, T2={t2_maxn}, T3={t3_maxn}, PPF={ppf:.1f})")
     return final
 
 
 def main():
     t_start = time.time()
     print("=" * 60)
-    print(f"BRUV Fish Counting — Multi-Tier Ensemble (Tier {TIER})")
+    print(f"BRUV Fish Counting — Adaptive PPF Calibration (Tier {TIER})")
     print(f"Device: {DEVICE}")
     print("=" * 60)
 
     config = {
         "tier": TIER,
-        "method": "multi_tier_ensemble",
-        "t1_method": "dual_bg_pixel_density",
-        "t2_method": "yolov8n_peak_frames",
-        "t3_method": "claude_vlm_counting",
-        "pixels_per_fish": PIXELS_PER_FISH,
+        "method": "adaptive_ppf_ensemble",
+        "bg_method": "dual_bg_mog2_knn",
+        "calibration": "yolo_ppf",
+        "default_ppf": DEFAULT_PPF,
+        "calib_range": f"{CALIB_MIN_DETECTIONS}-{CALIB_MAX_DETECTIONS}",
         "yolo_conf": YOLO_CONF,
         "n_peak_frames": N_PEAK_FRAMES,
         "vlm_n_frames": VLM_N_FRAMES,
@@ -430,7 +495,6 @@ def main():
     print("\n--- Processing videos ---")
     pred_maxn = {}
 
-    # Process labeled videos with full multi-tier pipeline
     scored_videos = [v for v in available_videos if Path(v).name in labeled_names]
     other_videos = [v for v in available_videos if Path(v).name not in labeled_names]
 
@@ -443,7 +507,6 @@ def main():
 
         pred_maxn[video_name] = process_video(video_path, t_start)
 
-    # Predict 0 for all unlabeled videos
     for video_path in other_videos:
         video_name = Path(video_path).name
         pred_maxn[video_name] = 0
@@ -468,7 +531,7 @@ def main():
     print(f"correlation:      {eval_result.get('correlation', 0.0):.4f}")
     print(f"n_videos:         {eval_result.get('n_videos', 0)}")
     print(f"tier:             {TIER}")
-    print(f"method:           multi_tier_ensemble")
+    print(f"method:           adaptive_ppf_ensemble")
     print(f"total_seconds:    {t_total:.1f}")
     print(f"device:           {DEVICE}")
 
