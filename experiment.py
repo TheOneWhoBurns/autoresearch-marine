@@ -12,9 +12,10 @@ from prepare import (
     parse_series_id, parse_subvideo_index,
 )
 
-TIER = 1
+TIER = 2
 
 SAMPLE_FPS = 1
+SCALE_FACTOR = 0.5
 MOG2_HISTORY = 200
 MOG2_VAR_THRESHOLD = 40
 MOG2_DETECT_SHADOWS = True
@@ -22,23 +23,24 @@ MIN_CONTOUR_AREA = 100
 MORPH_KERNEL_SIZE = 3
 BLUR_SIZE = 5
 SINGLE_FISH_AREA = 234
-SCALE_FACTOR = 0.5
 WARMUP_FRAMES = 20
 
+YOLO_CONF = 0.15
+YOLO_IOU = 0.3
+YOLO_IMG_SIZE = 640
+TOP_K_FRAMES = 10
 
-def count_fish_mog2(video_path):
+
+def mog2_pass(video_path):
     import cv2
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        return 0, []
+        return []
 
     native_fps = cap.get(cv2.CAP_PROP_FPS)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     frame_interval = max(1, int(native_fps / SAMPLE_FPS))
-
-    print(f"  Video: {Path(video_path).name}, {native_fps:.1f}fps, "
-          f"{total_frames} frames, interval={frame_interval}")
 
     bg_sub = cv2.createBackgroundSubtractorMOG2(
         history=MOG2_HISTORY,
@@ -51,9 +53,8 @@ def count_fish_mog2(video_path):
     scaled_min_area = int(MIN_CONTOUR_AREA * sf2)
     scaled_fish_area = SINGLE_FISH_AREA * sf2
 
-    frame_counts = []
+    frame_data = []
     frame_idx = 0
-    max_count = 0
 
     while frame_idx < total_frames:
         cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
@@ -61,10 +62,8 @@ def count_fish_mog2(video_path):
         if not ret:
             break
 
-        if SCALE_FACTOR < 1.0:
-            frame = cv2.resize(frame, None, fx=SCALE_FACTOR, fy=SCALE_FACTOR)
-
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        small = cv2.resize(frame, None, fx=SCALE_FACTOR, fy=SCALE_FACTOR)
+        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
         blurred = cv2.GaussianBlur(gray, (BLUR_SIZE, BLUR_SIZE), 0)
         fg_mask = bg_sub.apply(blurred)
 
@@ -83,17 +82,70 @@ def count_fish_mog2(video_path):
                 fish_in_blob = max(1, int(round(area / scaled_fish_area)))
                 count += fish_in_blob
 
-        time_sec = frame_idx / native_fps
-        frame_counts.append((time_sec, count))
-        if len(frame_counts) > WARMUP_FRAMES and count > max_count:
-            max_count = count
-
+        frame_data.append((frame_idx, count))
         frame_idx += frame_interval
 
     cap.release()
-    print(f"  Processed {len(frame_counts)} frames")
+    return frame_data
 
-    return max_count, frame_counts
+
+def yolo_count_frame(model, video_path, frame_idx):
+    import cv2
+
+    cap = cv2.VideoCapture(video_path)
+    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+    ret, frame = cap.read()
+    cap.release()
+    if not ret:
+        return 0
+
+    results = model(frame, imgsz=YOLO_IMG_SIZE, conf=YOLO_CONF, iou=YOLO_IOU, verbose=False)
+    count = 0
+    for r in results:
+        for box in r.boxes:
+            cls = int(box.cls[0])
+            if cls in (0, 1, 2, 3, 14, 15, 16):
+                count += 1
+    return count
+
+
+def hybrid_count(video_path):
+    import cv2
+    from ultralytics import YOLO
+
+    print("  Phase 1: MOG2 scanning...")
+    t1 = time.time()
+    frame_data = mog2_pass(video_path)
+    print(f"  MOG2 scanned {len(frame_data)} frames in {time.time()-t1:.1f}s")
+
+    valid = frame_data[WARMUP_FRAMES:] if len(frame_data) > WARMUP_FRAMES else frame_data
+    if not valid:
+        return 0, frame_data
+
+    valid_sorted = sorted(valid, key=lambda x: x[1], reverse=True)
+    top_frames = valid_sorted[:TOP_K_FRAMES]
+    mog2_max = valid_sorted[0][1] if valid_sorted else 0
+
+    print(f"  MOG2 max count: {mog2_max}")
+    print(f"  Top frame indices: {[f[0] for f in top_frames]}")
+
+    print("  Phase 2: YOLO on top frames...")
+    t2 = time.time()
+    model = YOLO("yolov8n.pt")
+
+    yolo_counts = []
+    for fidx, mog_count in top_frames:
+        yc = yolo_count_frame(model, video_path, fidx)
+        yolo_counts.append(yc)
+        print(f"    Frame {fidx}: MOG2={mog_count}, YOLO={yc}")
+
+    yolo_max = max(yolo_counts) if yolo_counts else 0
+    print(f"  YOLO max: {yolo_max}, time: {time.time()-t2:.1f}s")
+
+    final_count = max(mog2_max, yolo_max)
+    print(f"  Final count (max of MOG2, YOLO): {final_count}")
+
+    return final_count, frame_data
 
 
 def main():
@@ -105,10 +157,13 @@ def main():
 
     config = {
         "tier": TIER,
-        "method": "mog2_scaled",
+        "method": "hybrid_mog2_yolo",
         "sample_fps": SAMPLE_FPS,
         "scale_factor": SCALE_FACTOR,
         "single_fish_area": SINGLE_FISH_AREA,
+        "yolo_conf": YOLO_CONF,
+        "yolo_iou": YOLO_IOU,
+        "top_k_frames": TOP_K_FRAMES,
     }
     print(f"\nConfig: {json.dumps(config, indent=2)}")
 
@@ -139,12 +194,12 @@ def main():
 
         print(f"\n  Processing: {video_name}")
         t1 = time.time()
-        max_count, frame_counts = count_fish_mog2(video_path)
+        max_count, frame_data = hybrid_count(video_path)
         pred_maxn[video_name] = max_count
         print(f"  MaxN prediction: {max_count} ({time.time()-t1:.1f}s)")
 
-        if frame_counts:
-            counts = [c for _, c in frame_counts]
+        if frame_data:
+            counts = [c for _, c in frame_data]
             print(f"  Count stats: mean={np.mean(counts):.1f}, "
                   f"max={np.max(counts)}, std={np.std(counts):.1f}")
 
@@ -167,7 +222,7 @@ def main():
     print(f"correlation:      {eval_result.get('correlation', 0.0):.4f}")
     print(f"n_videos:         {eval_result.get('n_videos', 0)}")
     print(f"tier:             {TIER}")
-    print(f"method:           mog2_scaled")
+    print(f"method:           hybrid_mog2_yolo")
     print(f"total_seconds:    {t_total:.1f}")
     print(f"device:           {DEVICE}")
 
