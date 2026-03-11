@@ -308,23 +308,34 @@ def get_peak_frame_indices(scan_results, ppf, n_peaks=10):
     return selected
 
 
-def tier2_yolo_count(video_path, peak_frames):
-    """Tier 2: Run YOLOv8 on peak frames for direct detection count."""
+def tier2_yolo_count(video_path, peak_frames, scan_results=None):
+    """Tier 2: Run YOLOv8 on peak frames for direct detection count.
+
+    Also returns PPF calibration samples from peak frames (for fallback
+    calibration when primary calibration fails on sparse videos).
+    """
     if not peak_frames:
-        return 0
+        return 0, []
 
     try:
         import cv2
         model = _get_yolo_model()
     except ImportError:
         print("    [T2] YOLO not available, skipping")
-        return None
+        return None, []
+
+    # Build frame_idx → fg_pixels lookup from scan results
+    px_lookup = {}
+    if scan_results:
+        for idx, _, px in scan_results:
+            px_lookup[idx] = px
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        return None
+        return None, []
 
     max_det = 0
+    ppf_samples = []
     for frame_idx, time_sec, t1_count in peak_frames:
         cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
         ret, frame = cap.read()
@@ -336,10 +347,16 @@ def tier2_yolo_count(video_path, peak_frames):
         print(f"    [T2] frame {frame_idx} t={time_sec:.1f}s: "
               f"yolo={n_det}, t1={t1_count:.0f}")
 
+        # Collect PPF calibration from peak frames
+        if n_det >= CALIB_MIN_DETECTIONS and frame_idx in px_lookup:
+            fg_px = px_lookup[frame_idx]
+            if fg_px > 50:
+                ppf_samples.append(fg_px / n_det)
+
     cap.release()
 
     print(f"    [T2] YOLO MaxN: {max_det}")
-    return max_det if max_det > 0 else None
+    return (max_det if max_det > 0 else None), ppf_samples
 
 
 def tier3_vlm_count(video_path, peak_frames):
@@ -474,12 +491,15 @@ def process_video(video_path, t_start):
 
     # Phase 2: Calibrate PPF using YOLO on medium-activity frames
     elapsed = time.time() - t_start
+    calib_from_primary = True
     if elapsed < TIME_BUDGET - 60:
         t_cal = time.time()
         ppf = calibrate_ppf(video_path, scan_results)
+        calib_from_primary = (ppf != DEFAULT_PPF)
         print(f"    [Calib] completed in {time.time()-t_cal:.1f}s")
     else:
         ppf = DEFAULT_PPF
+        calib_from_primary = False
         print(f"    [Calib] skipped (time budget), using default PPF={ppf}")
 
     # Phase 3: Aggregate with calibrated PPF
@@ -493,13 +513,25 @@ def process_video(video_path, t_start):
     peak_frames = get_peak_frame_indices(scan_results, ppf, N_PEAK_FRAMES)
     print(f"    Peak frames: {len(peak_frames)} selected")
 
-    # Phase 5: YOLO on peaks (direct count)
+    # Phase 5: YOLO on peaks (direct count + fallback PPF calibration)
     elapsed = time.time() - t_start
     t2_maxn = None
     if elapsed < TIME_BUDGET - 20:
         t2 = time.time()
-        t2_maxn = tier2_yolo_count(video_path, peak_frames)
+        t2_maxn, t2_ppf_samples = tier2_yolo_count(
+            video_path, peak_frames, scan_results)
         print(f"    [T2] completed in {time.time()-t2:.1f}s")
+
+        # Fallback calibration: if primary failed, use T2 peak frame PPF samples
+        if not calib_from_primary and t2_ppf_samples and len(t2_ppf_samples) >= 2:
+            fallback_ppf = float(np.percentile(t2_ppf_samples, CALIB_PERCENTILE))
+            print(f"    [Calib-fallback] PPF from peak frames: {fallback_ppf:.1f} "
+                  f"({len(t2_ppf_samples)} samples)")
+            # Re-aggregate with fallback PPF
+            ppf = fallback_ppf
+            t1_maxn = tier1_aggregate(scan_results, ppf)
+            # Re-select peak frames with new PPF
+            peak_frames = get_peak_frame_indices(scan_results, ppf, N_PEAK_FRAMES)
 
     # Phase 6: VLM on peaks
     elapsed = time.time() - t_start
