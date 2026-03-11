@@ -395,17 +395,23 @@ def analyze_clusters(labels, metadata, features, segments=None, panns_labels=Non
 
                 if rms_mean < 0.001:
                     eco_label = "near-silence / deep ambient"
+                elif rms_mean < 0.005 and avg_low < -90:
+                    eco_label = "quiet ambient (very low energy)"
                 elif avg_low > -30 and mid_low_ratio < -15:
                     eco_label = "boat/ship engine noise"
-                elif avg_low > -35 and mid_low_ratio < -8:
+                elif avg_low > -40 and mid_low_ratio < -8 and rms_mean > 0.01:
                     eco_label = "distant vessel or low-freq rumble"
-                elif avg_ndsi > 0.3:
+                elif avg_ndsi > 0.3 and rms_mean > 0.005:
                     eco_label = "strong biological activity (reef/shrimp)"
                 elif avg_ndsi > 0 and avg_mid > -50:
                     eco_label = "biological sounds (whistles/clicks/reef)"
-                elif high_mid_ratio > -5:
+                elif avg_high > -80 and high_mid_ratio > 5:
                     eco_label = "echolocation clicks (high-freq)"
-                elif avg_low < -55 and avg_mid < -60:
+                elif avg_low > -80 and avg_low < -55 and rms_mean > 0.005:
+                    eco_label = "low-frequency biological (whale/fish)"
+                elif rms_mean > 0.01 and avg_low > -80:
+                    eco_label = "active soundscape (mixed sources)"
+                elif avg_low < -80 and avg_mid < -90:
                     eco_label = "quiet ambient (low energy)"
                 else:
                     eco_label = "mixed soundscape"
@@ -413,21 +419,21 @@ def analyze_clusters(labels, metadata, features, segments=None, panns_labels=Non
 
         # PANNs labels for representative samples
         if panns_labels is not None:
-            panns_sample_indices = [i for i in range(len(labels)) if mask[i]][:3]
-            categories = []
-            all_top_labels = []
-            for idx in panns_sample_indices:
-                if idx in panns_labels:
+            cluster_panns_indices = [idx for idx in panns_labels.keys()
+                                     if mask[idx]]
+            if cluster_panns_indices:
+                categories = []
+                all_top_labels = []
+                for idx in cluster_panns_indices:
                     cat = classify_segment_panns(panns_labels[idx])
                     categories.append(cat)
                     top3 = panns_labels[idx][:3]
                     all_top_labels.extend([l for l, _ in top3])
-            if categories:
                 from collections import Counter
                 cat_counts = Counter(categories)
                 label_counts = Counter(all_top_labels).most_common(5)
-                print(f"    PANNs categories: {dict(cat_counts)}")
-                print(f"    PANNs top labels: {[f'{l}' for l, c in label_counts]}")
+                print(f"    PANNs: {dict(cat_counts)}")
+                print(f"    PANNs top: {[l for l, c in label_counts]}")
 
 
 # ---------------------------------------------------------------------------
