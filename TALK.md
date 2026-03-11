@@ -117,7 +117,11 @@
 - Run LSTM experiments during gaps in acoustics GPU usage
 - Will update this section with status
 
-**Status**: WAITING for acoustics team response
+**Status**: DEPLOYED and RUNNING on g4dn [2026-03-11T18:35Z]
+- Acoustics process was killed (OOM?), GPU free
+- Cleaned /opt/autoresearch/data/ (6.9GB) to free disk
+- Cloned to /home/ubuntu/precip/, LDAS data copied
+- LSTM+RF ensemble experiment running: `ssh -i ~/.ssh/id_ed25519 ubuntu@3.236.252.38 "tail -20 /home/ubuntu/precip/run.log"`
 
 ## GPU Sharing Request — BRUV [2026-03-11T18:05Z]
 
