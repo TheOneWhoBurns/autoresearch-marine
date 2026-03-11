@@ -1,58 +1,47 @@
-# Instance Coordination
+# Instance Coordination — UPDATED [2026-03-11T21:00Z]
 
-## Active Instances
+## ⚠️ COMPUTE PLAN: 2 GPU INSTANCES ONLY ⚠️
 
-### BRUV Fish Counting (claude/nostalgic-moore) — [2026-03-11T18:25Z]
-- **Instance**: i-068c002844e665ad2 (c5.xlarge, on-demand CPU, DL AMI)
-- **IP**: 3.237.202.26
-- **Task**: Experiment with IoU tracking integration
-- **Status**: Setting up (pip install), then video download, then experiment (~1-2h total)
-- **Branch**: claude/nostalgic-moore
-- **What's running**: experiment.py with new `tier2_tracked_count` — IoU-based fish tracking on 40-frame window around peak activity
-- **Expected output**: composite_score with tracking-aware ensemble (T1 pixel density + T2 tracked count)
-- **Monitor**: `ssh ubuntu@3.237.202.26 sudo tail -f /var/log/userdata.log`
-- **Terminate**: `aws ec2 terminate-instances --instance-ids i-068c002844e665ad2 --region us-east-1`
-- **GPU queue**: #3 after acoustics + precip. Will use GPU slot for detection-only batch if CPU run isn't done by then.
+All CPU instances have been TERMINATED. All tasks run on GPU (g4dn.xlarge, NVIDIA T4).
 
-### Precipitation Nowcasting (claude/nostalgic-moore)
-- **Instance**: i-06fd82897332e5481 (c5.2xlarge, CPU)
-- **IP**: 34.235.148.139
-- **Task**: RF cascade + LGB ensemble for precipitation nowcasting
-- **Status**: Last experiment done (0.8748, didn't beat 0.8755). Pivoting to competition-compliant pipeline.
-- **Branch**: claude/nostalgic-moore
-- **Best score**: composite_score **0.8755** (weighted F1 across 3h/6h/12h)
-- **Current experiment**: Tier 3 — LGB cascade for 12h bottleneck + soil moisture depth gradients + leaf wetness condensation features
-- **LDAS data**: Downloaded and extracted (124 features/day, 2015-2021) at `/home/ubuntu/autoresearch/data/ldas/`
-- **Key discovery from raincaster_guidelines.pdf**: Competition uses +1h/+3h/+6h horizons (NOT 3h/6h/12h) with different per-horizon thresholds. Our prepare.py doesn't match actual competition spec.
-- **Needs GPU for**: LSTM/GRU sequence models (Tier 2), CNN, LDAS pretraining
-- **Monitor**: `ssh -i ~/.ssh/id_ed25519 ubuntu@34.235.148.139 "tail -20 /home/ubuntu/autoresearch/run.log"`
+| GPU Instance | IP | Tasks | vCPUs |
+|---|---|---|---|
+| g4dn.xlarge #1 (existing) | 3.236.252.38 | **Marine Acoustics + Precipitation** | 4 |
+| g4dn.xlarge #2 (launching) | TBD | **BRUV fish counting** | 4 |
 
-### Marine Acoustics (autoresearch/marine-radical) — [2026-03-11T17:55Z]
-- **GPU Instance**: i-00e07db48f33fad94 (g4dn.xlarge, CUDA T4)
-- **GPU IP**: 3.236.252.38
-- **CPU Instance**: i-063aa589c231aac84 (r5.xlarge) — CNN training epoch 100/500 on CPU, very slow
-- **Local**: M4 Mac running same experiment on MPS (Apple Silicon)
-- **Task**: Marine acoustic clustering with BirdNET v2.4 embeddings + SimCLR contrastive learning
-- **Status**: g4dn extracting features (~1700/4451), will hit CNN+BirdNET on CUDA soon
-- **Branch**: autoresearch/marine-radical
-- **What's new**: BirdNET v2.4 marine-specific embeddings (1024-dim, TF-Lite) integrated. Tests 3 combos: BirdNET-only, BirdNET+Tier1, BirdNET+CNN. GPU quota approved (G/VT on-demand = 4 vCPUs).
-- **Best score so far**: 0.979342 (500 epochs + SpecAugment, before BirdNET)
-- **Monitor GPU**: `ssh ubuntu@3.236.252.38 tail -f /var/log/userdata.log`
-- **Terminate GPU**: `aws ec2 terminate-instances --instance-ids i-00e07db48f33fad94 --region us-east-1`
-- **Terminate r5**: `aws ec2 terminate-instances --instance-ids i-063aa589c231aac84 --region us-east-1`
-- **S3 results**: `aws s3 cp s3://autoresearch-marine-data/marine-acoustic/results/latest_metrics.txt - --region us-east-1`
+**Total GPU vCPU usage: 8 (quota limit: 8)**
 
-### Other Running Instances
+**DO NOT launch CPU instances. DO NOT launch additional GPU instances. Stay within your allocated GPU.**
+
+## GPU #1: Marine Acoustics + Precipitation (3.236.252.38)
+
+### Marine Acoustics
+- **Instance**: i-00e07db48f33fad94 (g4dn.xlarge)
+- **IP**: 3.236.252.38
+- **Task**: Marine acoustic clustering with BirdNET v2.4 embeddings + SimCLR
+- **Best score**: 0.979342
+- **r5.xlarge and c5.2xlarge TERMINATED** — run everything here
+- **Share GPU with precipitation** — coordinate GPU memory
+
+### Precipitation Nowcasting
+- **Instance**: SAME g4dn.xlarge at 3.236.252.38
+- **Status**: ACTIVELY RUNNING (PID visible, python3 experiment.py)
+- **Best score**: 0.8755
+- **c5.2xlarge TERMINATED** — this GPU is your only compute
+- **Share GPU with acoustics** — coordinate GPU memory
+- **Log**: `/home/ubuntu/precip/run.log`
+
+## GPU #2: BRUV Fish Counting (LAUNCHING)
+
+- **Instance**: NEW g4dn.xlarge (launching now)
+- **Task**: v5 full pipeline — process ALL 18 videos through scan+YOLO+tracking
+- **Best score**: 0.998320 (but unlabeled videos were not fully processed)
+- **Code**: `s3://autoresearch-marine-data/bruv/code/gpu_stream_v5.py`
 
 ## Shared Resources
-- **S3 bucket**: s3://autoresearch-marine-data/bruv/
-  - `code/` — latest experiment scripts
-  - `models/` — trained classifier (caballus_classifier.pkl, GBM F1=0.831)
-  - `results/` — experiment results, logs, verification frames
+- **S3 bucket**: s3://autoresearch-marine-data/ (bruv/, marine-acoustic/, precip/)
 - **R2 bucket**: sala-2026-hackathon-data (bruv-videos/)
-- **GPU quotas**: G/VT spot: 4 vCPUs (BRUV using all 4). P spot: 8 vCPUs (free). P on-demand: 8 vCPUs (free).
-- **p3.2xlarge UNAVAILABLE**: Tried all AZs in us-east-1 (spot + on-demand) — no capacity. Need alternative: either free up G/VT by terminating a BRUV g4dn, try another region, or wait for p3 capacity.
-- **On-demand vCPU limit**: 16 (currently 12 used by other instances)
+- **GPU quota**: 8 G/VT vCPUs total — ALL USED (2× g4dn.xlarge)
 - **g4dn.xlarge (i-00e07db48f33fad94) is ACOUSTICS** — not BRUV. BRUV is on c5.xlarge CPU now. Precip can request G/VT vCPUs from acoustics owner.
 
 ## Current BRUV Score — UPDATED [2026-03-11T20:45Z]
