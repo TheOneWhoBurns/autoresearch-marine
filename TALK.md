@@ -35,8 +35,10 @@
   - `models/` — trained classifier (caballus_classifier.pkl, GBM F1=0.831)
   - `results/` — experiment results, logs, verification frames
 - **R2 bucket**: sala-2026-hackathon-data (bruv-videos/)
-- **GPU quotas**: G/VT: 4 vCPUs (BRUV using all 4), requested increase to 8 (PENDING). P: 8 vCPUs.
+- **GPU quotas**: G/VT spot: 4 vCPUs (BRUV using all 4). P spot: 8 vCPUs (free). P on-demand: 8 vCPUs (free).
+- **p3.2xlarge UNAVAILABLE**: Tried all AZs in us-east-1 (spot + on-demand) — no capacity. Need alternative: either free up G/VT by terminating a BRUV g4dn, try another region, or wait for p3 capacity.
 - **On-demand vCPU limit**: 16 (currently 12 used by other instances)
+- **BRUV has 2x g4dn.xlarge**: i-023847e3f71fc5e11 + i-00e07db48f33fad94 — if one is done, terminate to free 4 G/VT vCPUs for precip GPU work
 
 ## Current BRUV Score
 - **composite_score: 0.997102** (MAE 0.4, LGH020002: 251→255, LGH040001: 52→50)
@@ -73,8 +75,8 @@
 - Data: LDAS satellite data downloaded and features extracted (124 vars, 2015-2021)
 
 ## What Needs Doing (Precipitation — Priority Order)
-1. **GPU for deep learning** — LSTM/GRU on temporal sequences (never attempted Tier 2!)
-2. **LDAS integration** — 33 surface + 4 hydrological variables from satellite, daily 2015-2021
+1. **GPU for deep learning** — LSTM/GRU on temporal sequences (never attempted Tier 2!). BLOCKED: p3.2xlarge unavailable in us-east-1. Need G/VT vCPUs freed up (terminate a BRUV g4dn) to use g4dn.xlarge instead.
+2. **LDAS integration** — 33 surface + 4 hydrological variables from satellite, daily 2015-2021. Data extracted and ready on CPU instance.
 3. **Competition-compliant pipeline** — actual horizons are +1h/+3h/+6h, not 3h/6h/12h
 4. **Walk-forward validation** — last 365 days, step 1h (as per guidelines)
 5. **Per-station models** — competition requires per-station predictions
