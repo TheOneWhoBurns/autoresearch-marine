@@ -356,8 +356,9 @@ def train_cnn_classifier(segments, pseudo_labels):
             return logits, feats
 
     model = MarineCNN(128, time_dim, n_classes, feat_dim=64).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200, eta_min=1e-5)
 
     X_tensor = torch.from_numpy(X[:, np.newaxis, :, :])
     y_tensor = torch.from_numpy(y.astype(np.int64))
@@ -383,7 +384,8 @@ def train_cnn_classifier(segments, pseudo_labels):
             total_loss += loss.item()
             correct += (logits.argmax(1) == batch_y).sum().item()
             total += len(batch_y)
-        if (epoch + 1) % 10 == 0:
+        scheduler.step()
+        if (epoch + 1) % 50 == 0:
             acc = correct / total * 100
             print(f"    Epoch {epoch+1}/{n_epochs}: loss={total_loss:.4f}, acc={acc:.1f}%")
 
