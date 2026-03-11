@@ -237,11 +237,12 @@ def calibrate_ppf(video_path, scan_results):
     after_warmup = scan_results[WARMUP_FRAMES:]
     sorted_by_px = sorted(after_warmup, key=lambda x: x[2])
 
-    # Sample from top half of activity (need some foreground pixels to calibrate)
-    # For sparse videos, this captures the only frames with fish
+    # Sample from 30th-95th percentile of activity
+    # Wide range catches sparse videos while including medium-activity frames
     n = len(sorted_by_px)
-    lo = int(n * 0.5)
-    candidate_frames = sorted_by_px[lo:]
+    lo = int(n * 0.3)
+    hi = int(n * 0.95)
+    candidate_frames = sorted_by_px[lo:hi]
 
     # Evenly sample CALIB_N_FRAMES from candidates
     if len(candidate_frames) <= CALIB_N_FRAMES:
@@ -275,11 +276,18 @@ def calibrate_ppf(video_path, scan_results):
     cap.release()
 
     if len(ppf_samples) >= CALIB_MIN_SAMPLES:
-        adaptive_ppf = float(np.percentile(ppf_samples, CALIB_PERCENTILE))
+        # Filter outliers: remove samples > 3x the minimum
+        # High PPF values come from frames where YOLO undercounts (occlusion)
+        min_ppf = min(ppf_samples)
+        filtered = [p for p in ppf_samples if p <= 3 * min_ppf]
+        if len(filtered) < CALIB_MIN_SAMPLES:
+            filtered = ppf_samples  # fall back to unfiltered
+
+        adaptive_ppf = float(np.percentile(filtered, CALIB_PERCENTILE))
         print(f"    [Calib] Adaptive PPF: {adaptive_ppf:.1f} "
-              f"(p{CALIB_PERCENTILE} of {len(ppf_samples)} samples, "
-              f"range={min(ppf_samples):.1f}-{max(ppf_samples):.1f}, "
-              f"median={np.median(ppf_samples):.1f})")
+              f"(p{CALIB_PERCENTILE} of {len(filtered)}/{len(ppf_samples)} samples, "
+              f"range={min(filtered):.1f}-{max(filtered):.1f}, "
+              f"median={np.median(filtered):.1f})")
         return adaptive_ppf
     else:
         print(f"    [Calib] Only {len(ppf_samples)} samples, using default PPF={DEFAULT_PPF}")
