@@ -36,6 +36,7 @@ KNN_HISTORY = 200
 KNN_DIST_THRESHOLD = 400.0
 PIXELS_PER_FISH = 46.0
 SUSTAINED_WINDOW = 5
+SUSTAINED_FLOOR = 0.96  # MaxN >= 96% of peak sustained count
 
 # --- Tier 2 config ---
 YOLO_CONF = 0.01  # very low conf — "kite" class acts as fish proxy
@@ -117,9 +118,12 @@ def tier1_count(video_path):
         sustained_max = counts.max()
 
     p99 = np.percentile(counts, 99)
-    maxn = int(round(0.45 * p99 + 0.55 * sustained_max))
+    blend = int(round(0.45 * p99 + 0.55 * sustained_max))
+    floor = int(round(sustained_max * SUSTAINED_FLOOR))
+    maxn = max(blend, floor)
 
-    print(f"    [T1] p99={p99:.0f}, sustained_max={sustained_max:.0f}, maxn={maxn}")
+    print(f"    [T1] p99={p99:.0f}, sustained_max={sustained_max:.0f}, "
+          f"blend={blend}, floor={floor}, maxn={maxn}")
     return maxn, frame_counts
 
 
