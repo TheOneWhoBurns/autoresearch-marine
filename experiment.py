@@ -307,7 +307,8 @@ def train_cnn_classifier(segments, pseudo_labels):
     import torch
     import torch.nn as nn
 
-    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    device_str = "mps" if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available() else "cpu"
+    device = torch.device(device_str)
     print(f"  CNN device: {device}")
 
     # Only use labeled segments (exclude noise label -1)
@@ -375,21 +376,6 @@ def train_cnn_classifier(segments, pseudo_labels):
         return 0.5 * (1 + np.cos(np.pi * (epoch - warmup_epochs) / (n_epochs - warmup_epochs)))
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
-    def spec_augment(batch, freq_mask_param=20, time_mask_param=30):
-        """SpecAugment-style data augmentation."""
-        b, c, f, t = batch.shape
-        augmented = batch.clone()
-        for idx in range(b):
-            # Frequency mask
-            f_start = torch.randint(0, max(1, f - freq_mask_param), (1,)).item()
-            f_width = torch.randint(0, freq_mask_param + 1, (1,)).item()
-            augmented[idx, :, f_start:f_start+f_width, :] = 0
-            # Time mask
-            t_start = torch.randint(0, max(1, t - time_mask_param), (1,)).item()
-            t_width = torch.randint(0, time_mask_param + 1, (1,)).item()
-            augmented[idx, :, :, t_start:t_start+t_width] = 0
-        return augmented
-
     model.train()
     for epoch in range(n_epochs):
         perm = torch.randperm(n)
@@ -409,7 +395,7 @@ def train_cnn_classifier(segments, pseudo_labels):
             correct += (logits.argmax(1) == batch_y).sum().item()
             total += len(batch_y)
         scheduler.step()
-        if (epoch + 1) % 50 == 0:
+        if (epoch + 1) % 100 == 0:
             acc = correct / total * 100
             print(f"    Epoch {epoch+1}/{n_epochs}: loss={total_loss:.4f}, acc={acc:.1f}%")
 
@@ -426,6 +412,151 @@ def train_cnn_classifier(segments, pseudo_labels):
 
     learned_features = np.vstack(features)
     print(f"  CNN learned features: {learned_features.shape}")
+    return learned_features
+
+
+# ---------------------------------------------------------------------------
+# Tier 3b: Contrastive learning (SimCLR-style) — no labels needed
+# ---------------------------------------------------------------------------
+
+def spec_augment(batch, freq_mask_param=20, time_mask_param=30):
+    """SpecAugment-style data augmentation."""
+    import torch
+    b, c, f, t = batch.shape
+    augmented = batch.clone()
+    for idx in range(b):
+        f_start = torch.randint(0, max(1, f - freq_mask_param), (1,)).item()
+        f_width = torch.randint(0, freq_mask_param + 1, (1,)).item()
+        augmented[idx, :, f_start:f_start+f_width, :] = 0
+        t_start = torch.randint(0, max(1, t - time_mask_param), (1,)).item()
+        t_width = torch.randint(0, time_mask_param + 1, (1,)).item()
+        augmented[idx, :, :, t_start:t_start+t_width] = 0
+    return augmented
+
+
+def train_contrastive(segments, temperature=0.1, feat_dim=64, n_epochs=300):
+    """Train a CNN encoder with NT-Xent contrastive loss (SimCLR).
+    No labels required — learns by comparing augmented views of same segment.
+    Returns learned features for all segments."""
+    import torch
+    import torch.nn as nn
+    import torch.nn.functional as F
+
+    device_str = "mps" if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available() else "cpu"
+    device = torch.device(device_str)
+    print(f"  Contrastive device: {device}")
+
+    # Build mel spectrograms for ALL segments
+    all_mels = []
+    for seg in segments:
+        all_mels.append(compute_melspec(seg))
+    time_dim = min(m.shape[1] for m in all_mels)
+    X_all = np.array([m[:, :time_dim] for m in all_mels], dtype=np.float32)
+    X_all = (X_all - X_all.min()) / (X_all.max() - X_all.min() + 1e-8)
+
+    class Encoder(nn.Module):
+        def __init__(self, n_mels, time_dim, feat_dim):
+            super().__init__()
+            self.conv = nn.Sequential(
+                nn.Conv2d(1, 16, 3, stride=2, padding=1), nn.ReLU(), nn.BatchNorm2d(16),
+                nn.Conv2d(16, 32, 3, stride=2, padding=1), nn.ReLU(), nn.BatchNorm2d(32),
+                nn.Conv2d(32, 64, 3, stride=2, padding=1), nn.ReLU(), nn.BatchNorm2d(64),
+                nn.Conv2d(64, 128, 3, stride=2, padding=1), nn.ReLU(), nn.BatchNorm2d(128),
+            )
+            dummy = torch.zeros(1, 1, n_mels, time_dim)
+            conv_out = self.conv(dummy)
+            flat_dim = conv_out.numel()
+            # Feature head
+            self.features = nn.Sequential(
+                nn.Flatten(),
+                nn.Linear(flat_dim, feat_dim),
+                nn.ReLU(),
+            )
+            # Projection head (used during training, discarded for clustering)
+            self.projector = nn.Sequential(
+                nn.Linear(feat_dim, feat_dim),
+                nn.ReLU(),
+                nn.Linear(feat_dim, feat_dim),
+            )
+
+        def forward(self, x, return_projection=False):
+            h = self.conv(x)
+            feats = self.features(h)
+            if return_projection:
+                proj = self.projector(feats)
+                return feats, F.normalize(proj, dim=1)
+            return feats
+
+    model = Encoder(128, time_dim, feat_dim).to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=5e-3)
+
+    X_tensor = torch.from_numpy(X_all[:, np.newaxis, :, :])
+    n = len(X_tensor)
+    batch_size = 64  # larger batches = more negatives = better contrastive signal
+
+    warmup_epochs = 15
+    def lr_lambda(epoch):
+        if epoch < warmup_epochs:
+            return epoch / warmup_epochs
+        return 0.5 * (1 + np.cos(np.pi * (epoch - warmup_epochs) / (n_epochs - warmup_epochs)))
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+
+    print(f"  Training contrastive: {n} segments, {n_epochs} epochs, temp={temperature}")
+    model.train()
+    for epoch in range(n_epochs):
+        perm = torch.randperm(n)
+        total_loss = 0
+        n_batches = 0
+        for i in range(0, n, batch_size):
+            batch_x = X_tensor[perm[i:i+batch_size]].to(device)
+            if len(batch_x) < 4:  # need enough for contrastive pairs
+                continue
+
+            # Two augmented views of same batch
+            view1 = spec_augment(batch_x, freq_mask_param=25, time_mask_param=35)
+            view2 = spec_augment(batch_x, freq_mask_param=25, time_mask_param=35)
+
+            _, z1 = model(view1, return_projection=True)
+            _, z2 = model(view2, return_projection=True)
+
+            # NT-Xent loss
+            bsz = z1.shape[0]
+            z = torch.cat([z1, z2], dim=0)  # (2B, D)
+            sim = torch.mm(z, z.t()) / temperature  # (2B, 2B)
+
+            # Mask out self-similarity
+            mask = torch.eye(2 * bsz, dtype=torch.bool, device=device)
+            sim.masked_fill_(mask, -1e9)
+
+            # Positive pairs: (i, i+B) and (i+B, i)
+            labels = torch.cat([
+                torch.arange(bsz, 2 * bsz, device=device),
+                torch.arange(0, bsz, device=device),
+            ])
+            loss = F.cross_entropy(sim, labels)
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item()
+            n_batches += 1
+
+        scheduler.step()
+        if (epoch + 1) % 50 == 0:
+            avg_loss = total_loss / max(n_batches, 1)
+            print(f"    Epoch {epoch+1}/{n_epochs}: contrastive_loss={avg_loss:.4f}")
+
+    # Extract features (use feature head, not projection head)
+    model.eval()
+    features = []
+    with torch.no_grad():
+        for i in range(0, n, batch_size):
+            batch = X_tensor[i:i+batch_size].to(device)
+            feats = model(batch, return_projection=False)
+            features.append(feats.cpu().numpy())
+
+    learned_features = np.vstack(features)
+    print(f"  Contrastive features: {learned_features.shape}")
     return learned_features
 
 
@@ -628,20 +759,17 @@ def main():
     # Discovery insights
     discovery = evaluate_discovery(labels, metadata, features_reduced, segments)
 
-    # Tier 3: CNN classifier with pseudo-labels
-    print("\n--- Tier 3: CNN Classifier ---")
+    # Tier 3a: CNN classifier with pseudo-labels
+    print("\n--- Tier 3a: CNN Classifier ---")
     t1 = time.time()
     cnn_features = train_cnn_classifier(segments, labels)
-    # Re-cluster using CNN features
     from sklearn.preprocessing import StandardScaler
     cnn_norm = StandardScaler().fit_transform(cnn_features)
 
-    # Try CNN-only features
     features_reduced_t3 = reduce_dimensions(cnn_norm)
     labels_t3 = cluster(features_reduced_t3)
     eval_t3 = evaluate_clustering(labels_t3, features_reduced_t3, method_name="tier3_cnn")
 
-    # Also try combined
     tier1_norm = StandardScaler().fit_transform(features)
     combined = np.hstack([tier1_norm, cnn_norm])
     features_reduced_t3c = reduce_dimensions(combined)
@@ -650,23 +778,58 @@ def main():
     print(f"  CNN-only: {eval_t3['composite_score']:.6f}, "
           f"Combined: {eval_t3c['composite_score']:.6f}")
 
-    # Pick best Tier 3 result
     if eval_t3c['composite_score'] > eval_t3['composite_score']:
         eval_t3 = eval_t3c
         labels_t3 = labels_t3c
         features_reduced_t3 = features_reduced_t3c
-    print(f"  Tier 3 composite: {eval_t3['composite_score']:.6f} "
-          f"(vs Tier 1: {eval_result['composite_score']:.6f})")
-    print(f"  Tier 3 time: {time.time()-t1:.1f}s")
+    print(f"  Tier 3a: {eval_t3['composite_score']:.6f} "
+          f"(vs Tier 1: {eval_result['composite_score']:.6f}), {time.time()-t1:.1f}s")
 
-    # Use Tier 3 results if better
     if eval_t3['composite_score'] > eval_result['composite_score']:
-        print("  ** Tier 3 CNN features IMPROVED clustering! Using Tier 3 results. **")
+        print("  ** Tier 3a CNN IMPROVED! **")
         labels = labels_t3
         features_reduced = features_reduced_t3
         eval_result = eval_t3
-    else:
-        print("  Tier 3 CNN did not improve clustering. Keeping Tier 1 results.")
+
+    # Tier 3b: Contrastive learning (no labels needed)
+    print("\n--- Tier 3b: Contrastive Learning (SimCLR) ---")
+    t1 = time.time()
+    cl_features = train_contrastive(segments, temperature=0.1, feat_dim=64, n_epochs=300)
+    cl_norm = StandardScaler().fit_transform(cl_features)
+
+    features_reduced_cl = reduce_dimensions(cl_norm)
+    labels_cl = cluster(features_reduced_cl)
+    eval_cl = evaluate_clustering(labels_cl, features_reduced_cl, method_name="tier3_contrastive")
+
+    # Also try combined: tier1 + contrastive
+    combined_cl = np.hstack([tier1_norm, cl_norm])
+    features_reduced_clc = reduce_dimensions(combined_cl)
+    labels_clc = cluster(features_reduced_clc)
+    eval_clc = evaluate_clustering(labels_clc, features_reduced_clc, method_name="tier3_cl_combined")
+
+    # Also try: CNN + contrastive
+    combined_all = np.hstack([cnn_norm, cl_norm])
+    features_reduced_all = reduce_dimensions(combined_all)
+    labels_all = cluster(features_reduced_all)
+    eval_all = evaluate_clustering(labels_all, features_reduced_all, method_name="tier3_cnn_cl")
+
+    print(f"  CL-only: {eval_cl['composite_score']:.6f}, "
+          f"CL+T1: {eval_clc['composite_score']:.6f}, "
+          f"CNN+CL: {eval_all['composite_score']:.6f}")
+    print(f"  Tier 3b time: {time.time()-t1:.1f}s")
+
+    # Pick best across all approaches
+    candidates = [
+        (eval_cl, labels_cl, features_reduced_cl, "contrastive-only"),
+        (eval_clc, labels_clc, features_reduced_clc, "contrastive+tier1"),
+        (eval_all, labels_all, features_reduced_all, "cnn+contrastive"),
+    ]
+    for ev, lb, fr, name in candidates:
+        if ev['composite_score'] > eval_result['composite_score']:
+            print(f"  ** {name} IMPROVED: {ev['composite_score']:.6f} **")
+            labels = lb
+            features_reduced = fr
+            eval_result = ev
 
     # Update discovery with potentially new labels
     discovery = evaluate_discovery(labels, metadata, features_reduced, segments)
