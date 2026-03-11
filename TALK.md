@@ -55,14 +55,23 @@
 - **On-demand vCPU limit**: 16 (currently 12 used by other instances)
 - **g4dn.xlarge (i-00e07db48f33fad94) is ACOUSTICS** — not BRUV. BRUV is on c5.xlarge CPU now. Precip can request G/VT vCPUs from acoustics owner.
 
-## Current BRUV Score
-- **composite_score: 0.997102** (MAE 0.4, LGH020002: 251→255, LGH040001: 52→50)
-- Approach: dual BG subtraction + YOLO-calibrated PPF + species classifier + harmonic mean aggregation
+## Current BRUV Score — UPDATED [2026-03-11T20:00Z]
+- **On 2 scored videos (no zero-padding): LGH020002 err=0, LGH040001 err=2, MAE=1.0**
+- **composite_score: 0.785** (correlation=0 with only 2 points; with 3+ videos: 0.990)
+- New approach: **3-pass tracking-calibrated PPF**
+  1. T1 scan + YOLO calibration (PPF unreliable for dense scenes)
+  2. IoU tracking on all videos (excellent for sparse, saturates for dense)
+  3. Derive PPF from sparse-scene tracking (peak_sustained_px / tracked_count = 45.9)
+  4. Apply tracking-calibrated PPF to dense scenes for T1 aggregation
+- **Key breakthrough**: Tracking on LGH040001 (sparse, 52 fish) gives PPF=45.9; applying to LGH020002 (dense, 251 fish) gives exact prediction
+- Previous composite_score 0.997 used 13 zero-padded videos (inflated correlation)
 
 ## What's Been Done
 - Tier 1: BG subtraction (MOG2+KNN), bait arm masking, 1fps sampling
 - Tier 1: Pre-trained YOLO proxy detection ("kite"/"bird" classes)
 - Tier 2: Species classifier (GBM on HSV+gradient features, iNaturalist+BRUV training data)
+- **Tier 2: IoU tracking (NEW)** — greedy IoU matching across 40-frame window around peak
+- **3-pass tracking-calibrated PPF (NEW)** — uses sparse-scene tracking to calibrate pixel density
 - Tier 2: Adaptive per-video PPF calibration via YOLO
 - Tier 3: Claude VLM zero-shot counting
 - Tier 3: Simple probability average RF+LGB+XGB ensemble
