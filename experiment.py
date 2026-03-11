@@ -153,10 +153,10 @@ def tier1_scan(video_path):
 def tier1_aggregate(scan_results, ppf):
     """Convert raw pixel counts to fish counts and compute MaxN.
 
-    Uses the 99th percentile of the smoothed (rolling-average) signal.
-    This is more principled than combining two separate estimates:
-    - Smoothing first reduces frame-to-frame noise (BG subtraction artifacts)
-    - Then p99 captures the sustained peak without single-frame outliers
+    Uses harmonic mean of p99 and sustained_max (5-frame rolling max).
+    Harmonic mean is conservative — closer to the smaller value — which
+    is appropriate since both are noisy estimates and we prefer to slightly
+    undercount than overcount.
     """
     if len(scan_results) <= WARMUP_FRAMES:
         return 0
@@ -164,19 +164,21 @@ def tier1_aggregate(scan_results, ppf):
     counts = np.array([px / ppf for _, _, px in scan_results[WARMUP_FRAMES:]])
 
     if len(counts) >= SUSTAINED_WINDOW:
-        # Smooth with rolling average, then take p99 of the smoothed signal
         windowed = np.convolve(
             counts, np.ones(SUSTAINED_WINDOW) / SUSTAINED_WINDOW, mode='valid')
-        maxn = int(round(np.percentile(windowed, 99)))
         sustained_max = windowed.max()
     else:
-        maxn = int(round(np.percentile(counts, 99)))
         sustained_max = counts.max()
 
-    p99_raw = np.percentile(counts, 99)
+    p99 = np.percentile(counts, 99)
 
-    print(f"    [T1-agg] ppf={ppf:.1f}, raw_p99={p99_raw:.0f}, "
-          f"sustained_max={sustained_max:.0f}, smoothed_p99={maxn}")
+    if p99 > 0 and sustained_max > 0:
+        maxn = int(round(2.0 / (1.0/p99 + 1.0/sustained_max)))
+    else:
+        maxn = int(round(max(p99, sustained_max)))
+
+    print(f"    [T1-agg] ppf={ppf:.1f}, p99={p99:.0f}, sustained={sustained_max:.0f}, "
+          f"hmean={maxn}")
     return maxn
 
 
