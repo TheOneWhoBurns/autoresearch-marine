@@ -366,7 +366,7 @@ def train_cnn_classifier(segments, pseudo_labels):
 
     batch_size = 32
     n = len(X_tensor)
-    n_epochs = 400
+    n_epochs = 500
 
     warmup_epochs = 20
     def lr_lambda(epoch):
