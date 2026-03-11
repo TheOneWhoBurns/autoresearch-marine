@@ -153,10 +153,10 @@ def tier1_scan(video_path):
 def tier1_aggregate(scan_results, ppf):
     """Convert raw pixel counts to fish counts and compute MaxN.
 
-    Uses adaptive blending between p99 (peak) and sustained_max (rolling window):
-    - If p99 ≈ sustained_max → sustained peak, trust p99 more
-    - If p99 >> sustained_max → transient spike, trust sustained more
-    This adapts to any video without hardcoded weights.
+    Uses the geometric mean of p99 and sustained_max as the MaxN estimate.
+    Geometric mean naturally handles the fact that both signals are noisy
+    estimates of the same quantity, and is robust to either one being
+    an outlier (less sensitive than arithmetic mean to extreme values).
     """
     if len(scan_results) <= WARMUP_FRAMES:
         return 0
@@ -172,18 +172,15 @@ def tier1_aggregate(scan_results, ppf):
 
     p99 = np.percentile(counts, 99)
 
-    # Adaptive blend: weight p99 more when it agrees with sustained
-    if p99 > 0:
-        agreement = min(sustained_max / p99, 1.0)  # 0→disagree, 1→agree
+    # Geometric mean of p99 and sustained_max
+    # More robust than arithmetic mean — dampens outliers from either signal
+    if p99 > 0 and sustained_max > 0:
+        maxn = int(round(np.sqrt(p99 * sustained_max)))
     else:
-        agreement = 0.0
-    # When agreement=1: 60% p99 + 40% sustained (trust the peak)
-    # When agreement=0: 20% p99 + 80% sustained (distrust transient spike)
-    p99_weight = 0.2 + 0.4 * agreement
-    maxn = int(round(p99_weight * p99 + (1 - p99_weight) * sustained_max))
+        maxn = int(round(max(p99, sustained_max)))
 
     print(f"    [T1-agg] ppf={ppf:.1f}, p99={p99:.0f}, sustained={sustained_max:.0f}, "
-          f"agreement={agreement:.2f}, p99_w={p99_weight:.2f}, maxn={maxn}")
+          f"geomean={maxn}")
     return maxn
 
 
