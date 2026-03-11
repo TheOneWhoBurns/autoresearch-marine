@@ -1,14 +1,12 @@
 """
-Fixed data preparation and evaluation for marine acoustic autoresearch.
+Fixed data preparation and evaluation for BRUV fish counting autoresearch.
 DO NOT MODIFY — this is the ground truth data loader and evaluation harness.
 
-Adapted from Karpathy's autoresearch pattern for marine bioacoustics.
-Runs on Apple Silicon (MPS), CPU, or CUDA — auto-detected.
-
-Data: SoundTrap hydrophone recordings from the Gulf of San Cristobal, Galapagos.
-  - Unit 5783: 144 kHz, ~20 min files
-  - Unit 6478: 96 kHz, ~10 min files
-  - Pilot: 48 kHz, ~5 min files
+Data: BRUV video from MigraMar reef monitoring in Galapagos.
+  2 video series, 18 sub-videos, ~65 GB total.
+  Labels: CumulativeMaxN.csv from Kaggle competition.
+Task: Predict MaxN (max fish count in a single frame) for Caranx caballus.
+Metric: composite_score from evaluate_maxn_predictions() — higher is better.
 """
 
 import os
@@ -18,15 +16,10 @@ import time
 from pathlib import Path
 
 import numpy as np
-import soundfile as sf
-import librosa
+import pandas as pd
 
-# ---------------------------------------------------------------------------
-# Platform detection
-# ---------------------------------------------------------------------------
 
 def detect_device():
-    """Auto-detect best available compute device."""
     try:
         import torch
         if torch.backends.mps.is_available():
@@ -37,293 +30,409 @@ def detect_device():
     except ImportError:
         return "cpu"
 
+
 DEVICE = detect_device()
 
-# ---------------------------------------------------------------------------
-# Constants (fixed, do not modify)
-# ---------------------------------------------------------------------------
+TARGET_SPECIES_GENUS = "Caranx"
+TARGET_SPECIES_NAME = "caballus"
+TARGET_COMMON_NAME = "Green jack"
 
-TARGET_SR = 48000           # resample everything to 48 kHz for consistency
-SEGMENT_SECONDS = 10        # each analysis segment is 10 seconds
-SEGMENT_SAMPLES = TARGET_SR * SEGMENT_SECONDS
-N_FFT = 2048
-HOP_LENGTH = 512
-N_MELS = 128
-F_MIN = 50                  # min freq Hz — below is self-noise
-F_MAX = 24000               # max freq Hz — Nyquist at 48kHz
+SUB_VIDEO_DURATION_MIN = 11.783
+SUB_VIDEO_DURATION_SEC = SUB_VIDEO_DURATION_MIN * 60
+NATIVE_FPS = 30
 
-TIME_BUDGET = 180           # experiment time budget in seconds (3 minutes)
-
-# Marine frequency bands (ecological significance)
-BAND_LOW = (50, 2000)       # ships, fish vocalizations, whale calls
-BAND_MID = (2000, 20000)    # snapping shrimp, dolphin whistles
-BAND_HIGH = (20000, 24000)  # echolocation clicks
-
-# ---------------------------------------------------------------------------
-# Data directories
-# ---------------------------------------------------------------------------
+SERIES_INFO = {
+    1: {"suffix": "0001", "sub_videos": 9},
+    2: {"suffix": "0002", "sub_videos": 9},
+}
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
-RAW_DIR = os.path.join(DATA_DIR, "raw")
+VIDEO_DIR = os.path.join(DATA_DIR, "videos")
+LABEL_DIR = os.path.join(DATA_DIR, "labels")
+FRAME_DIR = os.path.join(DATA_DIR, "frames")
 CACHE_DIR = os.path.join(DATA_DIR, "cache")
 RESULTS_DIR = os.path.join(DATA_DIR, "results")
 
-UNITS = {
-    "5783": {"sample_rate": 144000, "subdir": "5783"},
-    "6478": {"sample_rate": 96000,  "subdir": "6478"},
-    "pilot": {"sample_rate": 48000, "subdir": "Music_Soundtrap_Pilot"},
-}
-
-# ---------------------------------------------------------------------------
-# Data discovery and loading
-# ---------------------------------------------------------------------------
-
-def find_wav_files(data_dir=None):
-    """Find all WAV files across all units. Returns list of dicts."""
-    if data_dir is None:
-        data_dir = RAW_DIR
-    recordings = []
-    for unit_name, unit_info in UNITS.items():
-        unit_dir = os.path.join(data_dir, unit_info["subdir"])
-        if not os.path.isdir(unit_dir):
-            continue
-        for fname in sorted(os.listdir(unit_dir)):
-            if not fname.lower().endswith(".wav"):
-                continue
-            path = os.path.join(unit_dir, fname)
-            info = sf.info(path)
-            recordings.append({
-                "path": path, "filename": fname, "unit": unit_name,
-                "sample_rate": info.samplerate, "duration_s": info.duration,
-                "channels": info.channels, "frames": info.frames,
-            })
-    return recordings
+TIME_BUDGET = 300
 
 
-def load_audio(path, sr=TARGET_SR, duration_s=None, offset_s=0.0):
-    """Load WAV, resample to target SR, return (audio_float32, sr)."""
-    orig_sr = sf.info(path).samplerate
-    start = int(offset_s * orig_sr)
-    stop = int((offset_s + duration_s) * orig_sr) if duration_s else None
-    audio, _ = sf.read(path, dtype="float32", start=start, stop=stop)
-    if audio.ndim > 1:
-        audio = audio.mean(axis=1)
-    if orig_sr != sr:
-        audio = librosa.resample(audio, orig_sr=orig_sr, target_sr=sr)
-    return audio, sr
+def load_labels(label_dir=None):
+    if label_dir is None:
+        label_dir = LABEL_DIR
+
+    csv_path = os.path.join(label_dir, "CumulativeMaxN.csv")
+    if not os.path.exists(csv_path):
+        print(f"ERROR: {csv_path} not found")
+        print("Download from Kaggle: kaggle competitions download -c marine-conservation-with-migra-mar")
+        return None
+
+    df = pd.read_csv(csv_path)
+    print(f"  Loaded {len(df)} rows from CumulativeMaxN.csv")
+    print(f"  Columns: {list(df.columns)}")
+
+    col_map = {}
+    for c in df.columns:
+        cl = c.lower().strip().replace(" ", "_")
+        if "filename" in cl:
+            col_map[c] = "filename"
+        elif cl == "frame":
+            col_map[c] = "frame"
+        elif "time" in cl and "min" in cl:
+            col_map[c] = "time_mins"
+        elif cl == "family":
+            col_map[c] = "family"
+        elif cl == "genus":
+            col_map[c] = "genus"
+        elif cl == "species":
+            col_map[c] = "species"
+        elif "maxn" in cl.replace(" ", ""):
+            col_map[c] = "cumulative_maxn"
+    df = df.rename(columns=col_map)
+
+    return df
 
 
-def segment_audio(audio, sr=TARGET_SR, segment_seconds=SEGMENT_SECONDS, overlap=0.0):
-    """Split audio into fixed-length segments. Last is zero-padded."""
-    seg_len = int(sr * segment_seconds)
-    hop = int(seg_len * (1 - overlap))
-    segments = []
-    for start in range(0, len(audio), hop):
-        seg = audio[start:start + seg_len]
-        if len(seg) < seg_len:
-            seg = np.pad(seg, (0, seg_len - len(seg)))
-        segments.append(seg)
-    return segments
+def get_target_species_data(df):
+    if df is None:
+        return None
+
+    mask = pd.Series(False, index=df.index)
+
+    if "species" in df.columns and "genus" in df.columns:
+        genus_match = df["genus"].astype(str).str.strip().str.lower() == TARGET_SPECIES_GENUS.lower()
+        species_match = df["species"].astype(str).str.strip().str.lower() == TARGET_SPECIES_NAME.lower()
+        mask = genus_match & species_match
+
+    if mask.sum() == 0 and "species" in df.columns:
+        mask = df["species"].astype(str).str.contains(TARGET_SPECIES_NAME, case=False, na=False)
+
+    filtered = df[mask].copy()
+    print(f"  Target species ({TARGET_SPECIES_GENUS} {TARGET_SPECIES_NAME}) rows: {len(filtered)}")
+    return filtered
 
 
-def highpass_filter(audio, sr=TARGET_SR, cutoff_hz=50, order=4):
-    """Remove DC offset and low-frequency self-noise."""
-    from scipy.signal import butter, sosfilt
-    sos = butter(order, cutoff_hz, btype="high", fs=sr, output="sos")
-    return sosfilt(sos, audio).astype(np.float32)
+def parse_series_id(filename):
+    name = Path(filename).stem
+    if len(name) >= 9:
+        suffix = name[5:9]
+        if suffix == "0001":
+            return 1
+        elif suffix == "0002":
+            return 2
+    return 0
 
 
-# ---------------------------------------------------------------------------
-# Feature utilities (available to experiment.py)
-# ---------------------------------------------------------------------------
-
-def compute_melspec(audio, sr=TARGET_SR):
-    """Mel spectrogram in dB. Returns 2D array (n_mels, time_frames)."""
-    S = librosa.feature.melspectrogram(
-        y=audio, sr=sr, n_fft=N_FFT, hop_length=HOP_LENGTH,
-        n_mels=N_MELS, fmin=F_MIN, fmax=F_MAX,
-    )
-    return librosa.power_to_db(S, ref=np.max)
+def parse_subvideo_index(filename):
+    name = Path(filename).stem
+    if len(name) >= 5:
+        try:
+            return int(name[3:5])
+        except ValueError:
+            pass
+    return 0
 
 
-def compute_band_power(audio, sr=TARGET_SR):
-    """Mean power (dB) in each ecological frequency band."""
-    from scipy.signal import welch
-    freqs, psd = welch(audio, fs=sr, nperseg=N_FFT)
-    powers = {}
-    for name, (flo, fhi) in [("low", BAND_LOW), ("mid", BAND_MID), ("high", BAND_HIGH)]:
-        mask = (freqs >= flo) & (freqs < fhi)
-        powers[name] = float(10 * np.log10(np.mean(psd[mask]) + 1e-12)) if mask.any() else -120.0
-    return powers
+def time_to_subvideo(time_mins, series_id):
+    sub_idx = int(time_mins / SUB_VIDEO_DURATION_MIN) + 1
+    local_mins = time_mins - (sub_idx - 1) * SUB_VIDEO_DURATION_MIN
+    local_secs = local_mins * 60
+
+    suffix = SERIES_INFO.get(series_id, {}).get("suffix", "0001")
+    filename = f"LGH{sub_idx:02d}{suffix}.MP4"
+
+    return filename, local_secs
 
 
-def compute_rms(audio):
-    return float(np.sqrt(np.mean(audio ** 2)))
+def get_maxn_per_subvideo(df=None, label_dir=None):
+    if df is None:
+        df = load_labels(label_dir)
+
+    target_df = get_target_species_data(df)
+    if target_df is None or len(target_df) == 0:
+        return {}
+
+    maxn_dict = {}
+    if "filename" in target_df.columns and "cumulative_maxn" in target_df.columns:
+        for fname, group in target_df.groupby("filename"):
+            maxn_dict[fname] = int(group["cumulative_maxn"].max())
+
+    return maxn_dict
 
 
-# ---------------------------------------------------------------------------
-# Evaluation metrics (DO NOT CHANGE)
-# ---------------------------------------------------------------------------
+def get_series_maxn(maxn_per_subvideo):
+    series_maxn = {}
+    for fname, maxn in maxn_per_subvideo.items():
+        series_id = parse_series_id(fname)
+        if series_id not in series_maxn or maxn > series_maxn[series_id]:
+            series_maxn[series_id] = maxn
+    return series_maxn
 
-def evaluate_clustering(labels, features, method_name=""):
-    """
-    Evaluate clustering quality. Higher composite_score is better.
 
-    composite_score = 0.5 * silhouette + 0.3 * ch_norm + 0.2 * coverage
-    """
-    from sklearn.metrics import silhouette_score, calinski_harabasz_score
+def get_key_frames(df=None, label_dir=None):
+    if df is None:
+        df = load_labels(label_dir)
 
-    labels = np.asarray(labels)
-    features = np.asarray(features)
-    n_total = len(labels)
-    mask = labels >= 0
-    n_clustered = mask.sum()
-    n_noise = n_total - n_clustered
-    unique_labels = set(labels[mask])
-    n_clusters = len(unique_labels)
-    coverage = n_clustered / n_total if n_total > 0 else 0.0
+    target_df = get_target_species_data(df)
+    if target_df is None or len(target_df) == 0:
+        return []
 
-    result = {
-        "method": method_name, "n_clusters": n_clusters,
-        "n_noise": int(n_noise), "n_total": n_total, "coverage": coverage,
+    if "filename" not in target_df.columns or "cumulative_maxn" not in target_df.columns:
+        return []
+
+    key_frames = []
+    for fname, group in target_df.groupby("filename"):
+        sort_col = "frame" if "frame" in group.columns else group.columns[0]
+        group = group.sort_values(sort_col)
+        prev_maxn = 0
+        for _, row in group.iterrows():
+            curr_maxn = int(row["cumulative_maxn"])
+            if curr_maxn > prev_maxn:
+                key_frames.append({
+                    "filename": fname,
+                    "frame": int(row.get("frame", 0)),
+                    "time_mins": float(row.get("time_mins", 0)),
+                    "count": curr_maxn,
+                })
+                prev_maxn = curr_maxn
+
+    return key_frames
+
+
+def find_available_videos(video_dir=None):
+    if video_dir is None:
+        video_dir = VIDEO_DIR
+
+    if not os.path.isdir(video_dir):
+        return []
+
+    videos = sorted(Path(video_dir).glob("*.MP4")) + sorted(Path(video_dir).glob("*.mp4"))
+    return [str(v) for v in videos]
+
+
+def extract_frame(video_path, time_sec=None, frame_number=None):
+    import cv2
+
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        return None
+
+    if time_sec is not None:
+        cap.set(cv2.CAP_PROP_POS_MSEC, time_sec * 1000)
+    elif frame_number is not None:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+
+    ret, frame = cap.read()
+    cap.release()
+
+    return frame if ret else None
+
+
+def extract_frames_at_fps(video_path, sample_fps=1, max_frames=None):
+    import cv2
+
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        print(f"  ERROR: Cannot open {video_path}")
+        return
+
+    native_fps = cap.get(cv2.CAP_PROP_FPS)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    duration_sec = total_frames / native_fps if native_fps > 0 else 0
+
+    frame_interval = max(1, int(native_fps / sample_fps))
+
+    print(f"  Video: {Path(video_path).name}, {native_fps:.1f}fps, "
+          f"{total_frames} frames, {duration_sec:.1f}s")
+    print(f"  Sampling every {frame_interval} frames ({sample_fps} fps)")
+
+    count = 0
+    frame_idx = 0
+    while frame_idx < total_frames:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        time_sec = frame_idx / native_fps
+        yield time_sec, frame
+        count += 1
+
+        if max_frames and count >= max_frames:
+            break
+
+        frame_idx += frame_interval
+
+    cap.release()
+    print(f"  Extracted {count} frames")
+
+
+def get_video_info(video_path):
+    import cv2
+
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        return None
+
+    info = {
+        "fps": cap.get(cv2.CAP_PROP_FPS),
+        "total_frames": int(cap.get(cv2.CAP_PROP_FRAME_COUNT)),
+        "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+        "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
     }
-
-    if n_clusters < 2 or n_clustered < 2:
-        result.update(silhouette=-1.0, calinski_harabasz=0.0, composite_score=-1.0)
-        return result
-
-    sil = silhouette_score(features[mask], labels[mask])
-    ch = calinski_harabasz_score(features[mask], labels[mask])
-    ch_norm = 1.0 - 1.0 / (1.0 + ch / 100.0)
-    composite = 0.5 * sil + 0.3 * ch_norm + 0.2 * coverage
-
-    result.update(silhouette=float(sil), calinski_harabasz=float(ch),
-                  composite_score=float(composite))
-    return result
+    info["duration_sec"] = info["total_frames"] / info["fps"] if info["fps"] > 0 else 0
+    cap.release()
+    return info
 
 
-def evaluate_discovery(labels, metadata, features, segments=None):
-    """
-    Evaluate ecological discovery quality beyond raw clustering metrics.
-    Returns dict with discovery insights. This is for logging — NOT the
-    primary keep/discard metric, but valuable for the hackathon presentation.
+def evaluate_maxn_predictions(pred_maxn, true_maxn):
+    common_keys = set(pred_maxn.keys()) & set(true_maxn.keys())
+    if not common_keys:
+        return {
+            "composite_score": 0.0,
+            "n_videos": 0,
+            "error": "no common video keys between predictions and ground truth",
+        }
 
-    Measures:
-    - temporal_spread: do clusters span multiple time periods?
-    - unit_diversity: do clusters contain data from multiple hydrophones?
-    - band_separation: do clusters separate frequency bands?
-    - n_interesting: segments with high acoustic activity
-    """
-    labels = np.asarray(labels)
-    n_clusters = len(set(labels[labels >= 0]))
+    true_vals = np.array([true_maxn[k] for k in sorted(common_keys)])
+    pred_vals = np.array([pred_maxn[k] for k in sorted(common_keys)])
 
-    # Temporal spread: how many unique files does each cluster span?
-    temporal_spreads = []
-    unit_diversities = []
-    for c in set(labels[labels >= 0]):
-        cmask = labels == c
-        cluster_meta = [metadata[i] for i in range(len(metadata)) if cmask[i]]
-        unique_files = len(set(m["file"] for m in cluster_meta))
-        unique_units = len(set(m["unit"] for m in cluster_meta))
-        temporal_spreads.append(unique_files)
-        unit_diversities.append(unique_units)
+    abs_errors = np.abs(pred_vals - true_vals)
+    mae = float(np.mean(abs_errors))
 
-    # Band separation: compute per-cluster mean band powers if we have segments
-    band_info = {}
-    if segments is not None:
-        for c in sorted(set(labels[labels >= 0])):
-            cmask = labels == c
-            cluster_segs = [segments[i] for i in range(len(segments)) if cmask[i]]
-            sample = cluster_segs[:10]  # sample for speed
-            powers = [compute_band_power(s) for s in sample]
-            band_info[f"cluster_{c}"] = {
-                "low_db": float(np.mean([p["low"] for p in powers])),
-                "mid_db": float(np.mean([p["mid"] for p in powers])),
-                "high_db": float(np.mean([p["high"] for p in powers])),
-                "n_segments": int(cmask.sum()),
-            }
+    rel_errors = abs_errors / np.maximum(true_vals, 1).astype(float)
+    mre = float(np.mean(rel_errors))
+
+    log_true = np.log1p(true_vals.astype(float))
+    log_pred = np.log1p(pred_vals.astype(float))
+    log_mae = float(np.mean(np.abs(log_pred - log_true)))
+
+    if len(true_vals) >= 3:
+        corr = float(np.corrcoef(true_vals, pred_vals)[0, 1])
+        if np.isnan(corr):
+            corr = 0.0
+    else:
+        corr = 0.0
+
+    log_mae_score = 1.0 / (1.0 + log_mae)
+    mre_score = 1.0 / (1.0 + mre)
+    corr_score = max(0.0, corr)
+
+    composite = 0.4 * log_mae_score + 0.4 * mre_score + 0.2 * corr_score
+
+    per_video = {}
+    for k in sorted(common_keys):
+        per_video[k] = {
+            "true_maxn": int(true_maxn[k]),
+            "pred_maxn": int(pred_maxn[k]),
+            "abs_error": int(abs(pred_maxn[k] - true_maxn[k])),
+        }
 
     return {
-        "n_clusters": n_clusters,
-        "mean_temporal_spread": float(np.mean(temporal_spreads)) if temporal_spreads else 0,
-        "mean_unit_diversity": float(np.mean(unit_diversities)) if unit_diversities else 0,
-        "band_profiles": band_info,
+        "composite_score": float(composite),
+        "mae": mae,
+        "mre": mre,
+        "log_mae": log_mae,
+        "log_mae_score": float(log_mae_score),
+        "mre_score": float(mre_score),
+        "correlation": corr,
+        "n_videos": len(common_keys),
+        "per_video": per_video,
     }
 
 
-# ---------------------------------------------------------------------------
-# Dataset builder
-# ---------------------------------------------------------------------------
+def evaluate_frame_counts(pred_counts, true_counts):
+    pred = np.asarray(pred_counts, dtype=float)
+    true = np.asarray(true_counts, dtype=float)
 
-def build_dataset(data_dir=None, max_files=None, segment_seconds=SEGMENT_SECONDS):
-    """
-    Load all recordings, segment them, return (segments, metadata).
-    segments: list of np.array (each SEGMENT_SAMPLES long)
-    metadata: list of dicts {file, unit, segment_idx, offset_s, path}
-    """
-    recordings = find_wav_files(data_dir)
-    if max_files:
-        recordings = recordings[:max_files]
+    mae = float(np.mean(np.abs(pred - true)))
+    rmse = float(np.sqrt(np.mean((pred - true) ** 2)))
 
-    segments = []
-    metadata = []
-    print(f"Loading {len(recordings)} recordings...")
-    for rec in recordings:
-        print(f"  {rec['unit']}/{rec['filename']} ({rec['duration_s']:.0f}s @ {rec['sample_rate']}Hz)")
-        audio, sr = load_audio(rec["path"])
-        audio = highpass_filter(audio, sr)
-        file_segments = segment_audio(audio, sr, segment_seconds)
-        for i, seg in enumerate(file_segments):
-            segments.append(seg)
-            metadata.append({
-                "file": rec["filename"], "unit": rec["unit"],
-                "segment_idx": i, "offset_s": i * segment_seconds,
-                "path": rec["path"],
-            })
-    print(f"Total segments: {len(segments)} ({segment_seconds}s each)")
-    return segments, metadata
+    if len(pred) >= 3:
+        corr = float(np.corrcoef(pred, true)[0, 1])
+        if np.isnan(corr):
+            corr = 0.0
+    else:
+        corr = 0.0
+
+    return {
+        "frame_mae": mae,
+        "frame_rmse": rmse,
+        "frame_correlation": corr,
+        "n_frames": len(pred),
+    }
 
 
-# ---------------------------------------------------------------------------
-# Cache utilities
-# ---------------------------------------------------------------------------
+def print_evaluation(eval_result):
+    print("\n---")
+    print(f"composite_score:  {eval_result.get('composite_score', 0.0):.6f}")
+    print(f"mae:              {eval_result.get('mae', 0.0):.2f}")
+    print(f"mre:              {eval_result.get('mre', 0.0):.4f}")
+    print(f"log_mae:          {eval_result.get('log_mae', 0.0):.4f}")
+    print(f"correlation:      {eval_result.get('correlation', 0.0):.4f}")
+    print(f"n_videos:         {eval_result.get('n_videos', 0)}")
 
-def get_cache_path(key, suffix=".npy"):
-    os.makedirs(CACHE_DIR, exist_ok=True)
-    return os.path.join(CACHE_DIR, f"{key}{suffix}")
+    if "per_video" in eval_result:
+        print("\nPer-video results:")
+        for vid, info in eval_result["per_video"].items():
+            print(f"  {vid}: true={info['true_maxn']}, pred={info['pred_maxn']}, "
+                  f"err={info['abs_error']}")
 
 
-# ---------------------------------------------------------------------------
-# Main (data prep / verification)
-# ---------------------------------------------------------------------------
+def build_dataset(label_dir=None, video_dir=None):
+    if label_dir is None:
+        label_dir = LABEL_DIR
+    if video_dir is None:
+        video_dir = VIDEO_DIR
+
+    print("Loading labels...")
+    labels_df = load_labels(label_dir)
+    if labels_df is None:
+        return None
+
+    target_df = get_target_species_data(labels_df)
+    maxn_per_sub = get_maxn_per_subvideo(labels_df)
+    series_maxn = get_series_maxn(maxn_per_sub)
+    key_frames = get_key_frames(labels_df)
+
+    print(f"\nMaxN per sub-video:")
+    for fname in sorted(maxn_per_sub.keys()):
+        print(f"  {fname}: {maxn_per_sub[fname]}")
+
+    print(f"\nMaxN per series:")
+    for sid, maxn in sorted(series_maxn.items()):
+        print(f"  Series {sid}: {maxn}")
+
+    print(f"\nKey frames (where MaxN increases): {len(key_frames)}")
+
+    available_videos = find_available_videos(video_dir)
+    print(f"\nAvailable videos: {len(available_videos)}")
+    for v in available_videos:
+        print(f"  {Path(v).name}")
+
+    return {
+        "labels_df": labels_df,
+        "target_df": target_df,
+        "maxn_per_subvideo": maxn_per_sub,
+        "series_maxn": series_maxn,
+        "key_frames": key_frames,
+        "available_videos": available_videos,
+    }
+
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("Marine Acoustic Autoresearch — Data Preparation")
+    print("BRUV Fish Counting — Data Preparation")
     print(f"Device: {DEVICE}")
     print("=" * 60)
 
-    recordings = find_wav_files()
-    if not recordings:
-        print(f"\nNo WAV files found in {RAW_DIR}")
-        print(f"Expected: {RAW_DIR}/5783/*.wav, {RAW_DIR}/6478/*.wav, {RAW_DIR}/Music_Soundtrap_Pilot/*.wav")
+    for d in [DATA_DIR, VIDEO_DIR, LABEL_DIR, FRAME_DIR, CACHE_DIR, RESULTS_DIR]:
+        os.makedirs(d, exist_ok=True)
+
+    result = build_dataset()
+    if result is None:
+        print(f"\nNo label files found in {LABEL_DIR}")
+        print("Place CumulativeMaxN.csv in data/labels/")
         sys.exit(1)
-
-    print(f"\nFound {len(recordings)} recordings:")
-    total_duration = 0
-    for rec in recordings:
-        print(f"  [{rec['unit']:>5}] {rec['filename']:30s} {rec['duration_s']:7.1f}s @ {rec['sample_rate']:6d}Hz")
-        total_duration += rec["duration_s"]
-    print(f"\nTotal audio: {total_duration/3600:.1f} hours")
-
-    os.makedirs(CACHE_DIR, exist_ok=True)
-    os.makedirs(RESULTS_DIR, exist_ok=True)
-
-    print(f"\nBuilding segments (sr={TARGET_SR}, seg={SEGMENT_SECONDS}s)...")
-    segments, metadata = build_dataset()
-
-    with open(os.path.join(CACHE_DIR, "segment_metadata.json"), "w") as f:
-        json.dump(metadata, f, indent=2)
 
     print("\n" + "=" * 60)
     print("Ready to run experiments: python3 experiment.py")

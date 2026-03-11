@@ -1,117 +1,128 @@
-# autoresearch-marine
+# autoresearch-bruv
 
-Autonomous marine acoustic research on Apple Silicon. The agent iterates on
-`experiment.py` to discover ecological patterns in Galapagos hydrophone data,
-progressing through hackathon tiers naturally.
+Autonomous BRUV fish counting research on Apple Silicon. The agent iterates
+on `experiment.py` to improve Caranx caballus MaxN prediction from underwater
+BRUV video, progressing through hackathon tiers.
 
 ## Setup
 
 1. **Run tag**: propose a tag (e.g. `mar10`). Branch: `autoresearch/<tag>`.
 2. **Create branch**: `git checkout -b autoresearch/<tag>`.
 3. **Read files**: `prepare.py` (fixed), `experiment.py` (you edit), this file.
-4. **Verify data**: `data/raw/` must contain WAV files. If not, tell human.
+4. **Verify data**:
+   - `data/labels/CumulativeMaxN.csv` must exist. If not, tell human.
+   - `data/videos/` should contain at least one MP4 sub-video.
 5. **Init results.tsv**: header row only. Baseline recorded after first run.
 6. **Go**.
 
 ## Context
 
-Underwater recordings from 3 SoundTrap hydrophones in San Cristobal Bay, Galapagos:
+Baited Remote Underwater Video stations (BRUVs) from MigraMar reef monitoring
+in Galapagos. Two video series, 18 sub-videos total (~65 GB).
 
-| Unit | Sample Rate | Files | Duration/File |
-|------|------------|-------|---------------|
-| 5783 | 144 kHz | 2 | ~20 min |
-| 6478 | 96 kHz | 4 | ~10 min |
-| Pilot | 48 kHz | 5 | ~5 min |
+**Task**: Count the maximum number of Caranx caballus (green jack) visible in
+a single frame per video. This is the "MaxN" metric used in marine biology.
 
-Sound types present:
-- **Biological**: whale calls, dolphin whistles/clicks, fish drums, snapping shrimp
-- **Anthropogenic**: boat engines, sonar
-- **Ambient**: waves, rain, currents
+**Kaggle competition**: marine-conservation-with-migra-mar
 
-Frequency bands:
-- **LOW** (50-2000 Hz): ships, whale calls, fish
-- **MID** (2-20 kHz): shrimp, dolphins, reef
-- **HIGH** (20-24 kHz): echolocation clicks
+**Species data**:
+| Common Name | Scientific Name | Max Count (vid1) | Max Count (vid2) |
+|-------------|----------------|-------------------|-------------------|
+| Green jack | Caranx caballus | 251 | 52 |
+| Almaco jack | Seriola rivoliana | 11 | — |
+| Rainbow runner | Elagatis bipinnulata | 4 | — |
+| Pilotfish | Naucrates ductor | 3 | — |
+| Silky shark | Carcharhinus falciformis | 2 | — |
+
+Primary target is Caranx caballus — appears in large schools up to 251 fish.
+
+**Video structure**:
+- 2 series x 9 sub-videos each, ~11.783 min (707 sec) per sub-video
+- Vid 1: LGH010001.MP4 through LGH090001.MP4
+- Vid 2: LGH010002.MP4 through LGH090002.MP4
+- Each ~4 GB except final segments (shorter)
+- Native 30fps, ~20,000 frames per sub-video
+
+**Sub-video timing** (CSV timestamps to sub-video mapping):
+```
+sub_video_index = floor(time_mins / 11.783) + 1
+local_time = time_mins - (sub_video_index - 1) * 11.783
+```
+
+**Key sub-video**: LGH020002.MP4 has the most Caranx caballus action.
 
 ## Platform
 
-Apple Silicon (MPS). Available packages: numpy, scipy, librosa, scikit-learn,
-soundfile, umap-learn, hdbscan, matplotlib, torch (MPS backend).
+Apple Silicon (MPS). Available packages: numpy, scipy, pandas, scikit-learn,
+opencv-python, matplotlib, torch (MPS backend), ultralytics, Pillow.
 
 No CUDA. No `torch.compile`. If using PyTorch, use `torch.device("mps")`.
 
 ## The Hackathon Tiers
 
-The experiment naturally progresses through tiers. You don't have to follow
-them in order — if a Tier 2 idea will improve the score, jump to it.
+### Tier 1: Classical CV Baselines (starting point)
+- Background subtraction (MOG2): stationary BRUV means moving objects = fish
+- Frame differencing for motion detection
+- Contour detection + area/shape filtering
+- Color-based segmentation (fish vs blue water)
+- BRUV bait arm masking (always visible, must ignore)
+- **Goal**: establish baseline count, understand the visual challenges
 
-### Tier 1: Acoustic Landscape Indices (starting point)
-- MFCCs, spectral features, band powers, entropy
-- NDSI (Normalized Difference Soundscape Index): bio vs anthro ratio
-- Temporal entropy, acoustic complexity index (ACI)
-- Clustering with UMAP + HDBSCAN
-- **Discovery goal**: identify day/night patterns, boat vs biology separation
+### Tier 2: Pretrained Object Detection
+- YOLOv8 / RT-DETR out of the box for "fish-shaped" objects
+- Fine-tune with semi-automated annotations (SAM + Grounding DINO)
+- Tracking-based counting (ByteTrack, BoT-SORT) to avoid double-counting
+- Temporal aggregation across frame windows
+- **Goal**: reliable fish detection per frame
 
-### Tier 2: Pretrained Model Embeddings
-- PANNs (pretrained audio tagging): 2048-dim embeddings, runs on MPS
-- BirdNET / Perch embeddings (if available via pip)
-- Use embeddings as features → better clustering
-- Cosine similarity between segments for structure discovery
-- **Discovery goal**: what sound categories exist? temporal/spatial patterns?
+### Tier 3: Dense Counting & Advanced Methods
+- Crowd counting adaptation (CSRNet, CAN) for dense fish schools
+- VLM zero-shot counting (send frames to Claude API)
+- Active frame selection: lightweight model picks peak-count frames
+- Regression on density maps instead of individual detection
+- Ensemble: combine detection + density estimation
+- **Goal**: handle 251-fish frames accurately
 
-### Tier 3: Custom Classifier with Active Learning
-- Use Tier 1+2 findings to bootstrap labels
-- Train a small CNN or MLP on mel spectrograms (PyTorch + MPS)
-- Active learning: cluster → human-label most uncertain → retrain → repeat
-- Fine-tune on marine-specific classes found in exploration
-- **Discovery goal**: build a working detector for species in this bay
+### Cross-Tier Combinations
+- Tier 1 motion detection finds active frames -> Tier 2 runs detection on those
+- Tier 2 detections -> pseudo-labels for Tier 3 density model training
+- Temporal patterns from Tier 1 -> inform frame sampling strategy
+- Tier 2 tracking counts -> calibrate Tier 3 density regression
 
-### Cross-Tier Combinations (the exciting part!)
-- Tier 1 indices find "interesting" segments → Tier 2 embeddings classify them
-- Tier 2 embeddings reveal clusters → Tier 3 trains on those pseudo-labels
-- Temporal patterns from Tier 1 (dawn chorus, boat schedules) contextualize Tier 3
-- Band power profiles from Tier 1 validate Tier 2/3 cluster ecological meaning
-
-## Hackathon Judging (for context — guide your research choices)
+## Hackathon Judging
 - **Originality & Innovation (30%)**: unique approaches, surprising discoveries
 - **Technical Execution (30%)**: code quality, methodology complexity
 - **Impact & Relevance (25%)**: practical applicability for conservation
-- **Presentation (15%)**: (we handle this separately)
+- **Presentation (15%)**: (handled separately)
 
 ## Experimentation Rules
 
 **What you CAN do:**
 - Modify `experiment.py` — the ONLY file you edit. Everything is fair game:
-  architecture, features, models, training loops, anything.
+  architecture, features, models, counting strategies, anything.
 - Use PyTorch with MPS device for neural network experiments.
-- Import any installed package (numpy, scipy, librosa, sklearn, torch, etc).
+- Use OpenCV for all image/video processing.
+- Import any installed package (numpy, scipy, sklearn, torch, cv2, ultralytics, etc).
 
 **What you CANNOT do:**
 - Modify `prepare.py` (fixed evaluation + data loading).
 - Install new packages (use what's available).
 - Skip the evaluation — every run must output `composite_score`.
 
-**Primary metric**: `composite_score` from `evaluate_clustering()` — higher is better.
-This is what drives keep/discard decisions.
-
-**Discovery metric**: `evaluate_discovery()` output is logged but doesn't drive
-keep/discard. However, experiments that reveal ecological patterns (temporal
-structure, species separation, boat detection) are especially valuable even if
-composite_score improves only slightly.
+**Primary metric**: `composite_score` from `evaluate_maxn_predictions()` — higher
+is better. Combines log-scale MAE, mean relative error, and correlation.
 
 ## Output format
 
 ```
 ---
-composite_score:  0.345678
-silhouette:       0.234567
-calinski_harabasz:123.456
-n_clusters:       5
-n_noise:          12
-coverage:         0.9500
-n_features:       47
-total_segments:   632
+composite_score:  0.456789
+mae:              23.50
+mre:              0.3456
+correlation:      0.8901
+n_videos:         5
 tier:             1
+method:           background_subtraction
 total_seconds:    45.3
 device:           mps
 ```
@@ -123,18 +134,18 @@ Extract metric: `grep "^composite_score:" run.log`
 `results.tsv` (tab-separated, 6 columns):
 
 ```
-commit	composite_score	n_clusters	tier	status	description
+commit	composite_score	n_videos	tier	status	description
 ```
 
 Example:
 ```
-commit	composite_score	n_clusters	tier	status	description
-a1b2c3d	0.345678	5	1	keep	baseline: MFCC+UMAP+HDBSCAN
-b2c3d4e	0.412345	7	1	keep	add spectral contrast + delta MFCCs
-c3d4e5f	0.523456	8	2	keep	PANNs embeddings replace handcrafted features
-d4e5f6g	0.000000	0	2	crash	PANNs OOM on full dataset
-e5f6g7h	0.567890	6	2	keep	PANNs with batched inference
-f6g7h8i	0.612345	5	3	keep	small CNN on mel specs, pseudo-labels from Tier 2
+commit	composite_score	n_videos	tier	status	description
+a1b2c3d	0.234567	3	1	keep	baseline: MOG2 background subtraction
+b2c3d4e	0.312345	3	1	keep	tune contour area thresholds
+c3d4e5f	0.423456	5	2	keep	YOLOv8 pretrained fish detection
+d4e5f6g	0.000000	0	2	crash	YOLO OOM on full resolution
+e5f6g7h	0.534567	5	2	keep	YOLOv8 with frame downscaling
+f6g7h8i	0.612345	5	3	keep	density regression + YOLO ensemble
 ```
 
 ## The experiment loop
@@ -145,15 +156,14 @@ LOOP FOREVER:
 2. Edit `experiment.py` with next idea.
 3. `git commit -m "experiment: <description>"`.
 4. Run: `python3 experiment.py > run.log 2>&1`
-5. Read: `grep "^composite_score:\|^n_clusters:\|^tier:" run.log`
-6. If empty → crash. `tail -n 50 run.log` to debug.
+5. Read: `grep "^composite_score:\|^n_videos:\|^tier:" run.log`
+6. If empty -> crash. `tail -n 50 run.log` to debug.
 7. Log to results.tsv (don't commit results.tsv).
-8. If composite_score improved → keep commit.
-9. If worse → `git reset --hard HEAD~1`.
+8. If composite_score improved -> keep commit.
+9. If worse -> `git reset --hard HEAD~1`.
 
-**Tier advancement**: When you've exhausted Tier N ideas (diminishing returns),
-advance to Tier N+1. Update the `TIER` variable in experiment.py. You can
-always mix approaches across tiers.
+**Tier advancement**: When diminishing returns at Tier N, advance to N+1.
+Update `TIER` in experiment.py. Mix approaches across tiers freely.
 
 **Timeout**: Kill runs exceeding 5 minutes. Treat as crash.
 
@@ -164,60 +174,57 @@ tiers. The loop runs until interrupted.
 ## Research ideas (rough priority order)
 
 ### Quick wins (Tier 1)
-1. Add spectral contrast features
-2. Add delta + delta-delta MFCCs
-3. Tune UMAP: n_neighbors=[5,10,30,50], min_dist=[0.0,0.05,0.2]
-4. Try spectral clustering or GMM with BIC
-5. Add onset strength / tempo features
-6. Compute NDSI per segment
-7. Acoustic complexity index (ACI)
-8. Robust scaling or quantile transform instead of StandardScaler
+1. Tune MOG2 parameters (history, varThreshold, learning rate)
+2. Add morphological operations (open/close) to clean foreground mask
+3. BRUV arm masking: detect and mask the bait arm to avoid false positives
+4. Color-based fish segmentation in HSV space (fish are silvery/green)
+5. Adaptive thresholding + connected components instead of MOG2
+6. Frame differencing (current - previous) for simple motion detection
+7. Optical flow magnitude as fish activity indicator
+8. Watershed segmentation on foreground mask for touching fish
 
 ### Medium effort (Tier 2)
-9. PANNs embeddings (pip install panns-inference, runs on MPS)
-10. Concatenate PANNs embeddings with Tier 1 features
-11. Cosine similarity matrix → spectral clustering
-12. t-SNE or UMAP on PANNs → visualize sound landscape
+9. YOLOv8n (nano) pretrained on COCO — detects "fish" class
+10. RT-DETR pretrained for fish-like object detection
+11. Fine-tune YOLOv8 on manually labeled frames from this data
+12. SAM (Segment Anything) for zero-shot fish segmentation
+13. ByteTrack on YOLO detections for unique fish count per window
+14. Sliding window temporal aggregation for robust MaxN
+15. Multi-scale detection (fish appear at various sizes/distances)
+16. Non-max suppression tuning for dense fish clusters
 
 ### Ambitious (Tier 3)
-13. Small conv autoencoder on mel specs → learned embeddings
-14. Pseudo-label from best clustering → train CNN classifier
-15. Active learning loop simulation
-16. Temporal model: segment sequences as context
+17. CSRNet / CAN density map regression for crowd counting adaptation
+18. Regression CNN: frame -> fish count (train on pseudo-labeled data)
+19. Claude VLM counting: send key frames to Claude API for zero-shot counting
+20. Active frame selection: predict frame "interestingness" then count only peaks
+21. Temporal transformer: sequence of frames -> MaxN prediction
+22. Self-supervised pretraining on unlabeled frames
 
-### Claude-as-annotator (creative cross-tier)
-Claude Opus 4.6 and Sonnet 4.6 have native audio understanding. You can send
-WAV segments directly to the Anthropic API and ask Claude to describe what it
-hears (whale calls, boat noise, shrimp clicks, silence, etc.).
-
-Use this for pseudo-labeling:
-17. Pick representative segments from each cluster (e.g. closest to centroid)
-18. Send them to Claude API with a prompt like: "Describe the underwater sounds
-    in this recording. Identify: biological sounds (species if possible),
-    anthropogenic noise, ambient conditions."
-19. Use Claude's descriptions as pseudo-labels for Tier 3 classifier training
-20. Compare Claude's labels across clusters to validate ecological meaning
-
-To call the API from experiment.py:
+### Claude-as-counter (creative cross-tier)
+Claude has vision capabilities. Send extracted frames to the API:
 ```python
 import anthropic, base64
-client = anthropic.Anthropic()  # uses ANTHROPIC_API_KEY env var
-with open(wav_path, "rb") as f:
-    audio_b64 = base64.standard_b64encode(f.read()).decode("utf-8")
+client = anthropic.Anthropic()
+with open(frame_path, "rb") as f:
+    img_b64 = base64.standard_b64encode(f.read()).decode("utf-8")
 response = client.messages.create(
     model="claude-sonnet-4-6",
     max_tokens=1024,
     messages=[{"role": "user", "content": [
-        {"type": "media", "source": {"type": "base64", "media_type": "audio/wav", "data": audio_b64}},
-        {"type": "text", "text": "Describe the underwater sounds..."}
+        {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": img_b64}},
+        {"type": "text", "text": "Count the number of fish visible in this underwater BRUV image. Return only the integer count."}
     ]}],
 )
 ```
-This is especially powerful for originality points — using an LLM to annotate
-marine bioacoustics data is novel and directly applicable to conservation.
+Use this for:
+23. Zero-shot counting on peak frames identified by Tier 1/2
+24. Validate detection results: compare model counts to Claude's counts
+25. Generate training labels for Tier 3 regression models
 
-### Discovery-focused
-21. Day vs night comparison (extract timestamps from filenames)
-22. Per-unit acoustic profiles (do hydrophones hear different things?)
-23. Boat detection (high LOW band + low MID/HIGH)
-24. Biodiversity index per recording
+### Practical tips
+- Start with 1 sub-video. LGH020002.MP4 has the most action.
+- Sample at 1-2 fps, not 30fps. Most frames are redundant.
+- The BRUV bait arm is always visible — learn to ignore it.
+- 251 fish in one frame is a dense counting problem — detection may fail.
+- Background subtraction works because the BRUV is stationary.
