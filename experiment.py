@@ -31,7 +31,7 @@ from prepare import (
 # ---------------------------------------------------------------------------
 # TIER: current approach (agent updates this as it progresses)
 # ---------------------------------------------------------------------------
-TIER = 2  # 1=acoustic indices, 2=pretrained embeddings, 3=custom classifier
+TIER = 3  # 1=acoustic indices, 2=pretrained embeddings, 3=custom classifier
 
 # ---------------------------------------------------------------------------
 # Hyperparameters
@@ -298,6 +298,115 @@ def analyze_temporal(labels, metadata, segments):
 
 
 # ---------------------------------------------------------------------------
+# Tier 3: CNN classifier with pseudo-labels from HDBSCAN
+# ---------------------------------------------------------------------------
+
+def train_cnn_classifier(segments, pseudo_labels):
+    """Train a small CNN on mel spectrograms using HDBSCAN pseudo-labels.
+    Returns learned features (penultimate layer) for re-clustering."""
+    import torch
+    import torch.nn as nn
+
+    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    print(f"  CNN device: {device}")
+
+    # Only use labeled segments (exclude noise label -1)
+    mask = pseudo_labels >= 0
+    labeled_indices = np.where(mask)[0]
+    n_classes = len(set(pseudo_labels[mask]))
+    print(f"  Training CNN: {len(labeled_indices)} labeled segments, {n_classes} classes")
+
+    # Build mel spectrograms
+    mels = []
+    for idx in labeled_indices:
+        mel = compute_melspec(segments[idx])  # (128, T)
+        mels.append(mel)
+    time_dim = min(m.shape[1] for m in mels)
+    X = np.array([m[:, :time_dim] for m in mels], dtype=np.float32)
+    X = (X - X.min()) / (X.max() - X.min() + 1e-8)
+    y = pseudo_labels[mask]
+
+    # Simple CNN
+    class MarineCNN(nn.Module):
+        def __init__(self, n_mels, time_dim, n_classes, feat_dim=64):
+            super().__init__()
+            self.conv = nn.Sequential(
+                nn.Conv2d(1, 16, 3, stride=2, padding=1), nn.ReLU(), nn.BatchNorm2d(16),
+                nn.Conv2d(16, 32, 3, stride=2, padding=1), nn.ReLU(), nn.BatchNorm2d(32),
+                nn.Conv2d(32, 64, 3, stride=2, padding=1), nn.ReLU(), nn.BatchNorm2d(64),
+            )
+            # Compute conv output size
+            dummy = torch.zeros(1, 1, n_mels, time_dim)
+            conv_out = self.conv(dummy)
+            flat_dim = conv_out.numel()
+            self.features = nn.Sequential(
+                nn.Flatten(),
+                nn.Linear(flat_dim, feat_dim),
+                nn.ReLU(),
+            )
+            self.classifier = nn.Linear(feat_dim, n_classes)
+
+        def forward(self, x):
+            h = self.conv(x)
+            feats = self.features(h)
+            logits = self.classifier(feats)
+            return logits, feats
+
+    model = MarineCNN(128, time_dim, n_classes, feat_dim=64).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    criterion = nn.CrossEntropyLoss()
+
+    X_tensor = torch.from_numpy(X[:, np.newaxis, :, :])
+    y_tensor = torch.from_numpy(y.astype(np.int64))
+
+    batch_size = 64
+    n = len(X_tensor)
+    n_epochs = 30
+
+    model.train()
+    for epoch in range(n_epochs):
+        perm = torch.randperm(n)
+        total_loss = 0
+        correct = 0
+        total = 0
+        for i in range(0, n, batch_size):
+            batch_x = X_tensor[perm[i:i+batch_size]].to(device)
+            batch_y = y_tensor[perm[i:i+batch_size]].to(device)
+            logits, _ = model(batch_x)
+            loss = criterion(logits, batch_y)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item()
+            correct += (logits.argmax(1) == batch_y).sum().item()
+            total += len(batch_y)
+        if (epoch + 1) % 10 == 0:
+            acc = correct / total * 100
+            print(f"    Epoch {epoch+1}/{n_epochs}: loss={total_loss:.4f}, acc={acc:.1f}%")
+
+    # Extract features for ALL segments (including noise)
+    model.eval()
+    all_mels = []
+    for seg in segments:
+        mel = compute_melspec(seg)
+        all_mels.append(mel[:, :time_dim])
+    X_all = np.array(all_mels, dtype=np.float32)
+    X_all = (X_all - X_all.min()) / (X_all.max() - X_all.min() + 1e-8)
+    X_all_tensor = torch.from_numpy(X_all[:, np.newaxis, :, :])
+
+    features = []
+    with torch.no_grad():
+        for i in range(0, len(X_all_tensor), batch_size):
+            batch = X_all_tensor[i:i+batch_size].to(device)
+            _, feats = model(batch)
+            features.append(feats.cpu().numpy())
+
+    learned_features = np.vstack(features)
+    print(f"  CNN learned features: {learned_features.shape}")
+    return learned_features
+
+
+# ---------------------------------------------------------------------------
 # Dimensionality reduction
 # ---------------------------------------------------------------------------
 
@@ -494,6 +603,38 @@ def main():
     eval_result = evaluate_clustering(labels, features_reduced, method_name=f"tier{TIER}")
 
     # Discovery insights
+    discovery = evaluate_discovery(labels, metadata, features_reduced, segments)
+
+    # Tier 3: CNN classifier with pseudo-labels
+    print("\n--- Tier 3: CNN Classifier ---")
+    t1 = time.time()
+    cnn_features = train_cnn_classifier(segments, labels)
+    # Re-cluster using CNN features (combined with Tier 1)
+    from sklearn.preprocessing import StandardScaler
+    tier1_norm = StandardScaler().fit_transform(features)
+    cnn_norm = StandardScaler().fit_transform(cnn_features)
+    combined = np.hstack([tier1_norm, cnn_norm])
+    print(f"  Combined features: {combined.shape}")
+
+    # Reduce and re-cluster
+    features_reduced_t3 = reduce_dimensions(combined)
+    labels_t3 = cluster(features_reduced_t3)
+    eval_t3 = evaluate_clustering(labels_t3, features_reduced_t3, method_name="tier3_cnn")
+    print(f"  Tier 3 composite: {eval_t3['composite_score']:.6f} "
+          f"(vs Tier 1: {eval_result['composite_score']:.6f})")
+    print(f"  Tier 3 time: {time.time()-t1:.1f}s")
+
+    # Use Tier 3 results if better
+    if eval_t3['composite_score'] > eval_result['composite_score']:
+        print("  ** Tier 3 CNN features IMPROVED clustering! Using Tier 3 results. **")
+        labels = labels_t3
+        features_reduced = features_reduced_t3
+        eval_result = eval_t3
+        features = combined
+    else:
+        print("  Tier 3 CNN did not improve clustering. Keeping Tier 1 results.")
+
+    # Update discovery with potentially new labels
     discovery = evaluate_discovery(labels, metadata, features_reduced, segments)
 
     # PANNs labels for cluster representatives (Tier 2 interpretation)
