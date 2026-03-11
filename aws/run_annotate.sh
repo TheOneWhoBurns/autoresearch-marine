@@ -67,36 +67,11 @@ cd /opt/autoresearch
 echo "--- downloading annotate.py ---"
 aws s3 cp "s3://\$BUCKET/\$TRACK/code/annotate.py" .
 
-echo "--- downloading videos from R2 ---"
-python3 -u -c "
-import boto3, os
-client = boto3.client('s3',
-    endpoint_url='\$R2_ENDPOINT',
-    aws_access_key_id='\$R2_AK',
-    aws_secret_access_key='\$R2_SK',
-)
-paginator = client.get_paginator('list_objects_v2')
-videos = []
-for page in paginator.paginate(Bucket='\$R2_BUCKET', Prefix='bruv-videos/'):
-    for obj in page.get('Contents', []):
-        videos.append(obj['Key'].split('/')[-1])
-print(f'  Found {len(videos)} videos on R2')
-for v in sorted(videos):
-    dest = f'data/videos/{v}'
-    if os.path.exists(dest):
-        print(f'  {v} already exists, skipping')
-        continue
-    key = f'bruv-videos/{v}'
-    print(f'  Downloading {key}...')
-    try:
-        client.download_file('\$R2_BUCKET', key, dest)
-        sz = os.path.getsize(dest) / 1e9
-        print(f'  Done: {sz:.2f} GB')
-    except Exception as e:
-        print(f'  Error: {e}')
-"
-
-echo "--- running annotator ---"
+echo "--- running annotator (downloads videos on-demand) ---"
+export R2_ENDPOINT="\$R2_ENDPOINT"
+export R2_AK="\$R2_AK"
+export R2_SK="\$R2_SK"
+export R2_BUCKET="\$R2_BUCKET"
 python3 -u annotate.py $VIDEOS 2>&1 | tee annotate.log
 
 echo "--- uploading log ---"

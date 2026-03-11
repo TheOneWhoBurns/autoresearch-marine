@@ -169,31 +169,105 @@ def annotate_video(video_path, output_dir, model):
     return out_path
 
 
+def download_video(video_name, video_dir):
+    """Download a single video from R2 if not already present."""
+    import boto3
+
+    dest = os.path.join(video_dir, video_name)
+    if os.path.exists(dest):
+        print(f"  {video_name} already on disk")
+        return dest
+
+    r2_endpoint = os.environ.get("R2_ENDPOINT")
+    r2_ak = os.environ.get("R2_AK")
+    r2_sk = os.environ.get("R2_SK")
+    r2_bucket = os.environ.get("R2_BUCKET")
+
+    if not all([r2_endpoint, r2_ak, r2_sk, r2_bucket]):
+        print(f"  R2 credentials not set, skipping {video_name}")
+        return None
+
+    client = boto3.client('s3',
+        endpoint_url=r2_endpoint,
+        aws_access_key_id=r2_ak,
+        aws_secret_access_key=r2_sk,
+    )
+    key = f"bruv-videos/{video_name}"
+    print(f"  Downloading {video_name} from R2...")
+    t = time.time()
+    try:
+        client.download_file(r2_bucket, key, dest)
+        sz = os.path.getsize(dest) / 1e9
+        print(f"  Downloaded {video_name}: {sz:.2f} GB in {time.time()-t:.0f}s")
+        return dest
+    except Exception as e:
+        print(f"  Download error: {e}")
+        return None
+
+
+def list_r2_videos():
+    """List all video filenames on R2."""
+    import boto3
+
+    r2_endpoint = os.environ.get("R2_ENDPOINT")
+    r2_ak = os.environ.get("R2_AK")
+    r2_sk = os.environ.get("R2_SK")
+    r2_bucket = os.environ.get("R2_BUCKET")
+
+    if not all([r2_endpoint, r2_ak, r2_sk, r2_bucket]):
+        return []
+
+    client = boto3.client('s3',
+        endpoint_url=r2_endpoint,
+        aws_access_key_id=r2_ak,
+        aws_secret_access_key=r2_sk,
+    )
+    videos = []
+    paginator = client.get_paginator('list_objects_v2')
+    for page in paginator.paginate(Bucket=r2_bucket, Prefix='bruv-videos/'):
+        for obj in page.get('Contents', []):
+            videos.append(obj['Key'].split('/')[-1])
+    return sorted(videos)
+
+
+def upload_to_s3(fpath):
+    """Upload a single file to S3."""
+    import boto3
+    bucket = os.environ.get("BUCKET", "autoresearch-marine-data")
+    track = os.environ.get("TRACK", "bruv")
+    key = f"{track}/results/annotated/{Path(fpath).name}"
+    try:
+        boto3.client('s3').upload_file(fpath, bucket, key)
+        print(f"  Uploaded to s3://{bucket}/{key}")
+    except Exception as e:
+        print(f"  Upload failed: {e}")
+
+
 def main():
-    import cv2
     from ultralytics import YOLO
 
     video_dir = "data/videos"
     output_dir = "data/results/annotated"
+    os.makedirs(video_dir, exist_ok=True)
     os.makedirs(output_dir, exist_ok=True)
 
-    # Parse args
+    # Determine which videos to process
     if "--all" in sys.argv:
-        videos = sorted(Path(video_dir).glob("*.MP4"))
-    elif len(sys.argv) > 1 and sys.argv[1] != "--all":
-        # Specific videos
-        names = [a for a in sys.argv[1:] if not a.startswith("--")]
-        videos = [Path(video_dir) / n for n in names]
+        # List from R2, or from local dir
+        video_names = list_r2_videos()
+        if not video_names:
+            video_names = sorted(f.name for f in Path(video_dir).glob("*.MP4"))
+    elif len(sys.argv) > 1:
+        video_names = [a for a in sys.argv[1:] if not a.startswith("--")]
     else:
-        # Default: all videos
-        videos = sorted(Path(video_dir).glob("*.MP4"))
+        video_names = sorted(f.name for f in Path(video_dir).glob("*.MP4"))
 
-    if not videos:
+    if not video_names:
         print("No videos found")
         return
 
     print(f"=== BRUV Video Annotator ===")
-    print(f"Videos: {len(videos)}")
+    print(f"Videos to process: {len(video_names)}")
     print(f"Output: {output_dir}")
     print(f"Frame step: {FRAME_STEP} (output {OUTPUT_FPS}fps)")
 
@@ -202,34 +276,36 @@ def main():
     model = YOLO("yolov8n.pt")
 
     t_start = time.time()
-    outputs = []
+    n_done = 0
 
-    for vpath in videos:
-        if not vpath.exists():
-            print(f"  SKIP: {vpath} not found")
+    # Process one video at a time: download → annotate → upload → delete source
+    for video_name in video_names:
+        print(f"\n--- [{n_done+1}/{len(video_names)}] {video_name} ---")
+
+        # Download this video
+        video_path = download_video(video_name, video_dir)
+        if video_path is None:
             continue
-        result = annotate_video(str(vpath), output_dir, model)
-        if result:
-            outputs.append(result)
+
+        # Annotate
+        out_path = annotate_video(video_path, output_dir, model)
+        if out_path is None:
+            continue
+
+        # Upload annotated video immediately
+        upload_to_s3(out_path)
+        n_done += 1
+
+        # Delete source video to save disk space (keep annotated)
+        try:
+            os.remove(video_path)
+            print(f"  Removed source: {video_name}")
+        except OSError:
+            pass
 
     elapsed = time.time() - t_start
     print(f"\n=== Complete ===")
-    print(f"Processed {len(outputs)} videos in {elapsed:.0f}s")
-    print(f"Output directory: {output_dir}")
-
-    # Upload to S3 if AWS credentials available
-    try:
-        import boto3
-        bucket = os.environ.get("BUCKET", "autoresearch-marine-data")
-        track = os.environ.get("TRACK", "bruv")
-        print(f"\nUploading to s3://{bucket}/{track}/results/annotated/...")
-        for fpath in outputs:
-            key = f"{track}/results/annotated/{Path(fpath).name}"
-            boto3.client('s3').upload_file(fpath, bucket, key)
-            print(f"  Uploaded: {Path(fpath).name}")
-        print("Upload complete.")
-    except Exception as e:
-        print(f"S3 upload skipped: {e}")
+    print(f"Processed {n_done}/{len(video_names)} videos in {elapsed:.0f}s")
 
 
 if __name__ == "__main__":
