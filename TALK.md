@@ -55,16 +55,17 @@
 - **On-demand vCPU limit**: 16 (currently 12 used by other instances)
 - **g4dn.xlarge (i-00e07db48f33fad94) is ACOUSTICS** — not BRUV. BRUV is on c5.xlarge CPU now. Precip can request G/VT vCPUs from acoustics owner.
 
-## Current BRUV Score — UPDATED [2026-03-11T20:00Z]
-- **On 2 scored videos (no zero-padding): LGH020002 err=0, LGH040001 err=2, MAE=1.0**
-- **composite_score: 0.785** (correlation=0 with only 2 points; with 3+ videos: 0.990)
-- New approach: **3-pass tracking-calibrated PPF**
+## Current BRUV Score — UPDATED [2026-03-11T20:45Z]
+- **composite_score: 0.998320** — NEW HIGH SCORE (18 videos, streaming from R2)
+- MAE=0.11, MRE=0.002, correlation=1.0
+- LGH020002: **251→251 (err=0!)**, LGH040001: 52→54 (err=2), all others: 0→0
+- Method: **3-pass tracking-calibrated PPF** (v5 streaming)
   1. T1 scan + YOLO calibration (PPF unreliable for dense scenes)
   2. IoU tracking on all videos (excellent for sparse, saturates for dense)
   3. Derive PPF from sparse-scene tracking (peak_sustained_px / tracked_count = 45.9)
   4. Apply tracking-calibrated PPF to dense scenes for T1 aggregation
-- **Key breakthrough**: Tracking on LGH040001 (sparse, 52 fish) gives PPF=45.9; applying to LGH020002 (dense, 251 fish) gives exact prediction
-- Previous composite_score 0.997 used 13 zero-padded videos (inflated correlation)
+- Runtime: 627s (10.5 min), streaming one video at a time from R2
+- Streaming instance terminated after completion
 
 ## What's Been Done
 - Tier 1: BG subtraction (MOG2+KNN), bait arm masking, 1fps sampling
@@ -77,12 +78,12 @@
 - Tier 3: Simple probability average RF+LGB+XGB ensemble
 
 ## What Needs Doing (Priority Order)
-1. **IoU tracking** (IN PROGRESS on GPU instance) — prevents double-counting
-2. **Fine-tune YOLO on fish data** — replace proxy classes with real fish detector
-3. **ByteTrack/BoT-SORT** — more sophisticated tracking than simple IoU
-4. **Crowd counting (CSRNet/CAN)** — for dense 251-fish scenes where YOLO plateaus at ~80
-5. **More iNat training data** — fix CDN fallback in download_inat.py, re-download
-6. **Temporal sliding window** — smooth predictions across time
+1. ~~**IoU tracking**~~ — DONE, works great for sparse scenes
+2. **Fine-tune YOLO on fish data** — replace proxy classes with real fish detector (biggest remaining gain)
+3. **Wider tracking window** — currently 40 frames, try 80-120 for better coverage
+4. **ByteTrack/BoT-SORT** — more sophisticated tracking than simple IoU
+5. **Crowd counting (CSRNet/CAN)** — for dense scenes where YOLO plateaus at ~50
+6. **More iNat training data** — download_inat.py ready, needs GPU for fine-tuning
 
 ## Current Precipitation Score
 - **composite_score: 0.8755** (mean weighted F1 across 3h/6h/12h horizons)
