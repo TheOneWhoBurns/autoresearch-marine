@@ -172,15 +172,17 @@ def tier1_aggregate(scan_results, ppf):
 
     p99 = np.percentile(counts, 99)
 
-    # Geometric mean of p99 and sustained_max
-    # More robust than arithmetic mean — dampens outliers from either signal
+    # Harmonic mean of p99 and sustained_max
+    # More conservative than geometric mean — closer to the smaller value
+    # This is appropriate because both are noisy estimates and we prefer
+    # to slightly undercount than overcount (conservative bias)
     if p99 > 0 and sustained_max > 0:
-        maxn = int(round(np.sqrt(p99 * sustained_max)))
+        maxn = int(round(2.0 / (1.0/p99 + 1.0/sustained_max)))
     else:
         maxn = int(round(max(p99, sustained_max)))
 
     print(f"    [T1-agg] ppf={ppf:.1f}, p99={p99:.0f}, sustained={sustained_max:.0f}, "
-          f"geomean={maxn}")
+          f"hmean={maxn}")
     return maxn
 
 
