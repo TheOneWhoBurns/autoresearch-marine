@@ -455,87 +455,6 @@ def ensemble_maxn(t1_maxn, t2_maxn, t3_maxn):
     return final
 
 
-def process_video(video_path, t_start, all_calibrated_ppf=None):
-    """Process one video: scan → calibrate → aggregate → ensemble.
-
-    Args:
-        all_calibrated_ppf: list of calibrated PPF values from previously
-            processed videos. Used as fallback when per-video calibration
-            fails (e.g. sparse scenes with too few YOLO detections).
-            Principled: all videos in a BRUV survey use the same camera
-            system, so PPF should be similar across videos.
-    """
-    if all_calibrated_ppf is None:
-        all_calibrated_ppf = []
-
-    video_name = Path(video_path).name
-    print(f"\n  === {video_name} ===")
-
-    # Phase 1: BG subtraction scan (raw pixel counts)
-    t1 = time.time()
-    scan_results = tier1_scan(video_path)
-    print(f"    [T1-scan] completed in {time.time()-t1:.1f}s, {len(scan_results)} frames")
-
-    if len(scan_results) <= WARMUP_FRAMES:
-        return 0, None
-
-    # Phase 2: Calibrate PPF using YOLO on medium-activity frames
-    elapsed = time.time() - t_start
-    calibrated_ppf = None
-    if elapsed < TIME_BUDGET - 60:
-        t_cal = time.time()
-        ppf = calibrate_ppf(video_path, scan_results)
-        print(f"    [Calib] completed in {time.time()-t_cal:.1f}s")
-
-        # Track whether this was a successful calibration or a default fallback
-        if ppf != DEFAULT_PPF:
-            calibrated_ppf = ppf
-        else:
-            # Calibration failed — use cross-video PPF from other videos
-            if all_calibrated_ppf:
-                cross_ppf = float(np.median(all_calibrated_ppf))
-                print(f"    [Calib] Using cross-video PPF={cross_ppf:.1f} "
-                      f"(median of {len(all_calibrated_ppf)} calibration(s))")
-                ppf = cross_ppf
-            else:
-                print(f"    [Calib] No cross-video PPF available, using default={DEFAULT_PPF}")
-    else:
-        ppf = DEFAULT_PPF
-        print(f"    [Calib] skipped (time budget), using default PPF={ppf}")
-
-    # Phase 3: Aggregate with calibrated PPF
-    t1_maxn = tier1_aggregate(scan_results, ppf)
-
-    if t1_maxn < 5:
-        print(f"    Skipping T2/T3 (T1 count too low)")
-        return t1_maxn, calibrated_ppf
-
-    # Phase 4: Peak frames for T2/T3
-    peak_frames = get_peak_frame_indices(scan_results, ppf, N_PEAK_FRAMES)
-    print(f"    Peak frames: {len(peak_frames)} selected")
-
-    # Phase 5: YOLO on peaks (direct count)
-    elapsed = time.time() - t_start
-    t2_maxn = None
-    if elapsed < TIME_BUDGET - 20:
-        t2 = time.time()
-        t2_maxn = tier2_yolo_count(video_path, peak_frames)
-        print(f"    [T2] completed in {time.time()-t2:.1f}s")
-
-    # Phase 6: VLM on peaks
-    elapsed = time.time() - t_start
-    t3_maxn = None
-    if elapsed < TIME_BUDGET - 20:
-        t3 = time.time()
-        t3_maxn = tier3_vlm_count(video_path, peak_frames)
-        print(f"    [T3] completed in {time.time()-t3:.1f}s")
-
-    # Phase 7: Ensemble
-    final = ensemble_maxn(t1_maxn, t2_maxn, t3_maxn)
-    print(f"    Final MaxN: {final} (T1={t1_maxn}, T2={t2_maxn}, T3={t3_maxn}, PPF={ppf:.1f})")
-    return final, calibrated_ppf
-
-
 def main():
     t_start = time.time()
     print("=" * 60)
@@ -588,24 +507,95 @@ def main():
         key=lambda v: Path(v).name)
     other_videos = [v for v in available_videos if Path(v).name not in labeled_names]
 
-    # Track calibrated PPF values across all videos for cross-video fallback
+    # Two-pass approach: scan+calibrate first, then aggregate.
+    # This eliminates ordering dependency — all videos benefit from
+    # cross-video PPF regardless of processing order.
+
+    # Pass 1: Scan all videos and calibrate PPF
+    print("\n  --- Pass 1: Scan & Calibrate ---")
+    video_scan_data = {}  # name → (scan_results, calibrated_ppf)
     all_calibrated_ppf = []
 
     for video_path in scored_videos:
         video_name = Path(video_path).name
         elapsed = time.time() - t_start
-        if elapsed > TIME_BUDGET - 30:
-            print(f"  Approaching time budget, stopping at {video_name}")
+        if elapsed > TIME_BUDGET - 60:
+            print(f"  Approaching time budget, stopping scan at {video_name}")
             break
 
-        maxn, calibrated_ppf = process_video(video_path, t_start, all_calibrated_ppf)
-        pred_maxn[video_name] = maxn
+        print(f"\n  === {video_name} (scan) ===")
+        t1 = time.time()
+        scan_results = tier1_scan(video_path)
+        print(f"    [T1-scan] completed in {time.time()-t1:.1f}s, "
+              f"{len(scan_results)} frames")
 
-        # Store successful calibrations for cross-video fallback
-        if calibrated_ppf is not None:
-            all_calibrated_ppf.append(calibrated_ppf)
-            print(f"    [Cross-video] Stored PPF={calibrated_ppf:.1f} "
-                  f"({len(all_calibrated_ppf)} total)")
+        calibrated_ppf = None
+        if len(scan_results) > WARMUP_FRAMES:
+            elapsed = time.time() - t_start
+            if elapsed < TIME_BUDGET - 60:
+                t_cal = time.time()
+                ppf = calibrate_ppf(video_path, scan_results)
+                print(f"    [Calib] completed in {time.time()-t_cal:.1f}s")
+                if ppf != DEFAULT_PPF:
+                    calibrated_ppf = ppf
+                    all_calibrated_ppf.append(ppf)
+                    print(f"    [Cross-video] PPF={ppf:.1f} stored "
+                          f"({len(all_calibrated_ppf)} total)")
+
+        video_scan_data[video_name] = (video_path, scan_results, calibrated_ppf)
+
+    # Compute cross-video fallback PPF
+    if all_calibrated_ppf:
+        cross_video_ppf = float(np.median(all_calibrated_ppf))
+        print(f"\n  Cross-video PPF: {cross_video_ppf:.1f} "
+              f"(median of {len(all_calibrated_ppf)} calibration(s))")
+    else:
+        cross_video_ppf = DEFAULT_PPF
+        print(f"\n  No calibrations succeeded, using default PPF={DEFAULT_PPF}")
+
+    # Pass 2: Aggregate and run T2/T3
+    print("\n  --- Pass 2: Aggregate & Ensemble ---")
+    for video_name, (video_path, scan_results, calibrated_ppf) in video_scan_data.items():
+        print(f"\n  === {video_name} (aggregate) ===")
+
+        if len(scan_results) <= WARMUP_FRAMES:
+            pred_maxn[video_name] = 0
+            continue
+
+        # Use per-video PPF if calibration succeeded, else cross-video fallback
+        ppf = calibrated_ppf if calibrated_ppf is not None else cross_video_ppf
+        if calibrated_ppf is None:
+            print(f"    [Calib] Using cross-video PPF={ppf:.1f}")
+
+        t1_maxn = tier1_aggregate(scan_results, ppf)
+
+        if t1_maxn < 5:
+            pred_maxn[video_name] = t1_maxn
+            continue
+
+        # Peak frames for T2/T3
+        peak_frames = get_peak_frame_indices(scan_results, ppf, N_PEAK_FRAMES)
+
+        # T2: YOLO on peaks
+        elapsed = time.time() - t_start
+        t2_maxn = None
+        if elapsed < TIME_BUDGET - 20:
+            t2 = time.time()
+            t2_maxn = tier2_yolo_count(video_path, peak_frames)
+            print(f"    [T2] completed in {time.time()-t2:.1f}s")
+
+        # T3: VLM on peaks
+        elapsed = time.time() - t_start
+        t3_maxn = None
+        if elapsed < TIME_BUDGET - 20:
+            t3 = time.time()
+            t3_maxn = tier3_vlm_count(video_path, peak_frames)
+            print(f"    [T3] completed in {time.time()-t3:.1f}s")
+
+        final = ensemble_maxn(t1_maxn, t2_maxn, t3_maxn)
+        print(f"    Final MaxN: {final} (T1={t1_maxn}, T2={t2_maxn}, "
+              f"T3={t3_maxn}, PPF={ppf:.1f})")
+        pred_maxn[video_name] = final
 
     for video_path in other_videos:
         video_name = Path(video_path).name
