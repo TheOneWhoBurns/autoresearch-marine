@@ -459,8 +459,19 @@ def ensemble_maxn(t1_maxn, t2_maxn, t3_maxn):
     return final
 
 
-def process_video(video_path, t_start):
-    """Process one video: scan → calibrate → aggregate → ensemble."""
+def process_video(video_path, t_start, all_calibrated_ppf=None):
+    """Process one video: scan → calibrate → aggregate → ensemble.
+
+    Args:
+        all_calibrated_ppf: list of calibrated PPF values from previously
+            processed videos. Used as fallback when per-video calibration
+            fails (e.g. sparse scenes with too few YOLO detections).
+            Principled: all videos in a BRUV survey use the same camera
+            system, so PPF should be similar across videos.
+    """
+    if all_calibrated_ppf is None:
+        all_calibrated_ppf = []
+
     video_name = Path(video_path).name
     print(f"\n  === {video_name} ===")
 
@@ -470,14 +481,28 @@ def process_video(video_path, t_start):
     print(f"    [T1-scan] completed in {time.time()-t1:.1f}s, {len(scan_results)} frames")
 
     if len(scan_results) <= WARMUP_FRAMES:
-        return 0
+        return 0, None
 
     # Phase 2: Calibrate PPF using YOLO on medium-activity frames
     elapsed = time.time() - t_start
+    calibrated_ppf = None
     if elapsed < TIME_BUDGET - 60:
         t_cal = time.time()
         ppf = calibrate_ppf(video_path, scan_results)
         print(f"    [Calib] completed in {time.time()-t_cal:.1f}s")
+
+        # Track whether this was a successful calibration or a default fallback
+        if ppf != DEFAULT_PPF:
+            calibrated_ppf = ppf
+        else:
+            # Calibration failed — use cross-video PPF from other videos
+            if all_calibrated_ppf:
+                cross_ppf = float(np.median(all_calibrated_ppf))
+                print(f"    [Calib] Using cross-video PPF={cross_ppf:.1f} "
+                      f"(median of {len(all_calibrated_ppf)} calibration(s))")
+                ppf = cross_ppf
+            else:
+                print(f"    [Calib] No cross-video PPF available, using default={DEFAULT_PPF}")
     else:
         ppf = DEFAULT_PPF
         print(f"    [Calib] skipped (time budget), using default PPF={ppf}")
@@ -487,7 +512,7 @@ def process_video(video_path, t_start):
 
     if t1_maxn < 5:
         print(f"    Skipping T2/T3 (T1 count too low)")
-        return t1_maxn
+        return t1_maxn, calibrated_ppf
 
     # Phase 4: Peak frames for T2/T3
     peak_frames = get_peak_frame_indices(scan_results, ppf, N_PEAK_FRAMES)
@@ -512,7 +537,7 @@ def process_video(video_path, t_start):
     # Phase 7: Ensemble
     final = ensemble_maxn(t1_maxn, t2_maxn, t3_maxn)
     print(f"    Final MaxN: {final} (T1={t1_maxn}, T2={t2_maxn}, T3={t3_maxn}, PPF={ppf:.1f})")
-    return final
+    return final, calibrated_ppf
 
 
 def main():
@@ -562,8 +587,13 @@ def main():
     print("\n--- Processing videos ---")
     pred_maxn = {}
 
-    scored_videos = [v for v in available_videos if Path(v).name in labeled_names]
+    scored_videos = sorted(
+        [v for v in available_videos if Path(v).name in labeled_names],
+        key=lambda v: Path(v).name)
     other_videos = [v for v in available_videos if Path(v).name not in labeled_names]
+
+    # Track calibrated PPF values across all videos for cross-video fallback
+    all_calibrated_ppf = []
 
     for video_path in scored_videos:
         video_name = Path(video_path).name
@@ -572,7 +602,14 @@ def main():
             print(f"  Approaching time budget, stopping at {video_name}")
             break
 
-        pred_maxn[video_name] = process_video(video_path, t_start)
+        maxn, calibrated_ppf = process_video(video_path, t_start, all_calibrated_ppf)
+        pred_maxn[video_name] = maxn
+
+        # Store successful calibrations for cross-video fallback
+        if calibrated_ppf is not None:
+            all_calibrated_ppf.append(calibrated_ppf)
+            print(f"    [Cross-video] Stored PPF={calibrated_ppf:.1f} "
+                  f"({len(all_calibrated_ppf)} total)")
 
     for video_path in other_videos:
         video_name = Path(video_path).name
