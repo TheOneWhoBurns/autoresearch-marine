@@ -393,25 +393,28 @@ def analyze_clusters(labels, metadata, features, segments=None, panns_labels=Non
                 high_mid_ratio = avg_high - avg_mid
                 rms_mean = np.mean(rms_vals)
 
+                # Classify based on energy, band ratios, and NDSI
                 if rms_mean < 0.001:
                     eco_label = "near-silence / deep ambient"
-                elif rms_mean < 0.005 and avg_low < -90:
+                elif rms_mean < 0.005 and avg_low < -85:
                     eco_label = "quiet ambient (very low energy)"
                 elif avg_low > -30 and mid_low_ratio < -15:
-                    eco_label = "boat/ship engine noise"
-                elif avg_low > -40 and mid_low_ratio < -8 and rms_mean > 0.01:
-                    eco_label = "distant vessel or low-freq rumble"
+                    eco_label = "boat/ship engine noise (loud)"
+                elif mid_low_ratio < -20 and rms_mean > 0.01:
+                    eco_label = "vessel noise (strong low-freq dominance)"
+                elif mid_low_ratio < -10 and avg_mid < -110 and rms_mean > 0.005:
+                    eco_label = "vessel/engine (low-freq only, MID silent)"
                 elif avg_ndsi > 0.3 and rms_mean > 0.005:
                     eco_label = "strong biological activity (reef/shrimp)"
-                elif avg_ndsi > 0 and avg_mid > -50:
-                    eco_label = "biological sounds (whistles/clicks/reef)"
+                elif avg_ndsi > -0.2 and avg_mid > -85:
+                    eco_label = "biological sounds (shrimp/reef/fish)"
                 elif avg_high > -80 and high_mid_ratio > 5:
                     eco_label = "echolocation clicks (high-freq)"
-                elif avg_low > -80 and avg_low < -55 and rms_mean > 0.005:
-                    eco_label = "low-frequency biological (whale/fish)"
-                elif rms_mean > 0.01 and avg_low > -80:
-                    eco_label = "active soundscape (mixed sources)"
-                elif avg_low < -80 and avg_mid < -90:
+                elif avg_mid > -100 and avg_mid < -80 and rms_mean > 0.005:
+                    eco_label = "moderate biological (mid-freq activity)"
+                elif rms_mean > 0.01 and avg_low > -80 and avg_mid < -100:
+                    eco_label = "low-freq acoustic event"
+                elif avg_low < -100 and avg_mid < -110:
                     eco_label = "quiet ambient (low energy)"
                 else:
                     eco_label = "mixed soundscape"
