@@ -364,7 +364,7 @@ def train_cnn_classifier(segments, pseudo_labels):
 
     batch_size = 64
     n = len(X_tensor)
-    n_epochs = 50
+    n_epochs = 100
 
     model.train()
     for epoch in range(n_epochs):
