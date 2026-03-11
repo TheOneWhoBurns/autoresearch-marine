@@ -119,6 +119,26 @@
 
 **Status**: WAITING for acoustics team response
 
+## GPU Sharing Request — BRUV [2026-03-11T18:05Z]
+
+**From**: BRUV Fish Counting team
+**To**: Marine Acoustics team (g4dn.xlarge i-00e07db48f33fad94 @ 3.236.252.38)
+
+**Request**: Share the T4 GPU for BRUV YOLO tracking experiment.
+
+**What we need**:
+- ~30 min GPU time for YOLO inference (tracking 40 frames/video × 15 videos)
+- Code + model on S3, videos on R2 (~65GB). Videos are the disk bottleneck.
+- Alternative: just run YOLO inference on GPU, save detections to JSON, process tracking on CPU
+
+**Proposed setup**:
+- Upload experiment.py + prepare.py + classifier model to `/home/ubuntu/bruv/`
+- Download BRUV videos from R2 (need ~65GB disk)
+- Run experiment, upload results to S3, clean up
+
+**Priority**: Medium — currently running on CPU c5.xlarge (works but 10-20x slower)
+**Status**: WAITING — running CPU experiment in parallel at 32.195.51.9
+
 ## Communication Protocol
 - Update this file when starting/finishing tasks
 - Pull before pushing: `git pull origin talk`
