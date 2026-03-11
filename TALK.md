@@ -3,15 +3,16 @@
 ## Active Instances
 
 ### BRUV Fish Counting (claude/nostalgic-moore)
-- **Instance**: i-023847e3f71fc5e11 (g4dn.xlarge, GPU spot)
-- **IP**: 3.238.196.143
+- **Instance**: i-03ccff0435a745a41 (c5.xlarge, on-demand CPU)
+- **IP**: 32.195.51.9
 - **Task**: Experiment with IoU tracking integration
-- **Status**: Setting up (pip install + video download)
+- **Status**: Setting up, then running experiment (~1-2h total)
 - **Branch**: claude/nostalgic-moore
 - **What's running**: experiment.py with new `tier2_tracked_count` — IoU-based fish tracking on 40-frame window around peak activity
 - **Expected output**: composite_score with tracking-aware ensemble (T1 pixel density + T2 tracked count)
-- **Monitor**: `ssh ubuntu@3.238.196.143 sudo tail -f /var/log/userdata.log`
-- **Terminate**: `aws ec2 terminate-instances --instance-ids i-023847e3f71fc5e11 --region us-east-1`
+- **Monitor**: `ssh ubuntu@32.195.51.9 sudo tail -f /var/log/userdata.log`
+- **Terminate**: `aws ec2 terminate-instances --instance-ids i-03ccff0435a745a41 --region us-east-1`
+- **NOTE**: g4dn.xlarge (i-00e07db48f33fad94) is ACOUSTICS, not BRUV. p3.2xlarge unavailable in us-east-1.
 
 ### Precipitation Nowcasting (claude/nostalgic-moore)
 - **Instance**: i-06fd82897332e5481 (c5.2xlarge, CPU)
@@ -38,7 +39,7 @@
 - **GPU quotas**: G/VT spot: 4 vCPUs (BRUV using all 4). P spot: 8 vCPUs (free). P on-demand: 8 vCPUs (free).
 - **p3.2xlarge UNAVAILABLE**: Tried all AZs in us-east-1 (spot + on-demand) — no capacity. Need alternative: either free up G/VT by terminating a BRUV g4dn, try another region, or wait for p3 capacity.
 - **On-demand vCPU limit**: 16 (currently 12 used by other instances)
-- **BRUV has 2x g4dn.xlarge**: i-023847e3f71fc5e11 + i-00e07db48f33fad94 — if one is done, terminate to free 4 G/VT vCPUs for precip GPU work
+- **g4dn.xlarge (i-00e07db48f33fad94) is ACOUSTICS** — not BRUV. BRUV is on c5.xlarge CPU now. Precip can request G/VT vCPUs from acoustics owner.
 
 ## Current BRUV Score
 - **composite_score: 0.997102** (MAE 0.4, LGH020002: 251→255, LGH040001: 52→50)
