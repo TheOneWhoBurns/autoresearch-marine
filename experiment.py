@@ -58,6 +58,7 @@ VLM_N_FRAMES = 3
 
 STATIC_MASK_FRAMES = 60  # build static mask from first 60 post-warmup frames
 STATIC_MASK_THRESHOLD = 0.5  # pixel is "static" if foreground in >50% of mask frames
+MIN_CONTOUR_AREA = 10  # min pixel area for a contour to count as a fish (at 0.5x scale)
 
 def tier1_scan(video_path):
     """Scan video with dual BG subtraction + bait arm masking.
@@ -142,7 +143,13 @@ def tier1_scan(video_path):
             fg_final = fg_clean
 
         fg_pixels = np.count_nonzero(fg_final)
-        scan_results.append((frame_idx, time_sec, fg_pixels))
+
+        # Count connected components (individual fish in sparse scenes)
+        contours, _ = cv2.findContours(
+            fg_final * 255, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        n_contours = sum(1 for c in contours if cv2.contourArea(c) >= MIN_CONTOUR_AREA)
+
+        scan_results.append((frame_idx, time_sec, fg_pixels, n_contours))
         n_frames += 1
         frame_idx += frame_interval
 
@@ -153,15 +160,23 @@ def tier1_scan(video_path):
 def tier1_aggregate(scan_results, ppf):
     """Convert raw pixel counts to fish counts and compute MaxN.
 
-    Uses the geometric mean of p99 and sustained_max as the MaxN estimate.
-    Geometric mean naturally handles the fact that both signals are noisy
-    estimates of the same quantity, and is robust to either one being
-    an outlier (less sensitive than arithmetic mean to extreme values).
+    Uses dual counting strategy:
+    - Pixel density (fg_pixels / ppf) for dense scenes
+    - Contour counting for sparse scenes (individual fish are separated)
+    - Geometric mean of p99 and sustained_max for robustness
     """
     if len(scan_results) <= WARMUP_FRAMES:
         return 0
 
-    counts = np.array([px / ppf for _, _, px in scan_results[WARMUP_FRAMES:]])
+    # Pixel density counts
+    density_counts = np.array([px / ppf for _, _, px, _ in scan_results[WARMUP_FRAMES:]])
+    # Contour counts
+    contour_counts = np.array([nc for _, _, _, nc in scan_results[WARMUP_FRAMES:]])
+
+    # Use whichever count is higher per frame
+    # Dense scenes: pixel density > contour count (overlapping fish merge contours)
+    # Sparse scenes: contour count ≈ pixel density (individual fish)
+    counts = np.maximum(density_counts, contour_counts)
 
     if len(counts) >= SUSTAINED_WINDOW:
         windowed = np.convolve(
@@ -172,15 +187,17 @@ def tier1_aggregate(scan_results, ppf):
 
     p99 = np.percentile(counts, 99)
 
-    # Geometric mean of p99 and sustained_max
-    # More robust than arithmetic mean — dampens outliers from either signal
     if p99 > 0 and sustained_max > 0:
         maxn = int(round(np.sqrt(p99 * sustained_max)))
     else:
         maxn = int(round(max(p99, sustained_max)))
 
-    print(f"    [T1-agg] ppf={ppf:.1f}, p99={p99:.0f}, sustained={sustained_max:.0f}, "
-          f"geomean={maxn}")
+    # Log both signals for analysis
+    d_p99 = np.percentile(density_counts, 99)
+    c_p99 = np.percentile(contour_counts, 99)
+    print(f"    [T1-agg] ppf={ppf:.1f}, density_p99={d_p99:.0f}, "
+          f"contour_p99={c_p99:.0f}, combined_p99={p99:.0f}, "
+          f"sustained={sustained_max:.0f}, maxn={maxn}")
     return maxn
 
 
@@ -253,7 +270,7 @@ def calibrate_ppf(video_path, scan_results):
         return DEFAULT_PPF
 
     ppf_samples = []
-    for frame_idx, time_sec, fg_pixels in sample_frames:
+    for frame_idx, time_sec, fg_pixels, _ in sample_frames:
         if fg_pixels < 50:  # too few pixels to calibrate
             continue
 
@@ -292,7 +309,7 @@ def get_peak_frame_indices(scan_results, ppf, n_peaks=10):
         return []
     after_warmup = scan_results[WARMUP_FRAMES:]
     # Convert to estimated fish counts for ranking
-    with_counts = [(idx, t, px / ppf) for idx, t, px in after_warmup]
+    with_counts = [(idx, t, max(px / ppf, nc)) for idx, t, px, nc in after_warmup]
     sorted_frames = sorted(with_counts, key=lambda x: x[2], reverse=True)
     selected = []
     selected_times = []
