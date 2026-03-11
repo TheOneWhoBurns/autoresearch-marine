@@ -1,14 +1,12 @@
 """
-Fixed data preparation and evaluation for marine acoustic autoresearch.
+Fixed data preparation and evaluation for precipitation nowcasting autoresearch.
 DO NOT MODIFY — this is the ground truth data loader and evaluation harness.
 
-Adapted from Karpathy's autoresearch pattern for marine bioacoustics.
-Runs on Apple Silicon (MPS), CPU, or CUDA — auto-detected.
-
-Data: SoundTrap hydrophone recordings from the Gulf of San Cristobal, Galapagos.
-  - Unit 5783: 144 kHz, ~20 min files
-  - Unit 6478: 96 kHz, ~10 min files
-  - Pilot: 48 kHz, ~5 min files
+Data: Weather station observations from San Cristóbal Island, Galápagos.
+  4 stations (CER, JUN, MERC, MIRA), 15-min intervals, ~10 years.
+Task: Predict precipitation class at 3h, 6h, 12h horizons.
+Classes: 0=no_rain (<0.1mm), 1=light_rain (0.1-2.0mm), 2=heavy_rain (>2.0mm)
+Metric: Weighted F1-score averaged across horizons.
 """
 
 import os
@@ -18,15 +16,11 @@ import time
 from pathlib import Path
 
 import numpy as np
-import soundfile as sf
-import librosa
+import pandas as pd
+from sklearn.metrics import f1_score, classification_report
 
-# ---------------------------------------------------------------------------
-# Platform detection
-# ---------------------------------------------------------------------------
 
 def detect_device():
-    """Auto-detect best available compute device."""
     try:
         import torch
         if torch.backends.mps.is_available():
@@ -39,291 +33,289 @@ def detect_device():
 
 DEVICE = detect_device()
 
-# ---------------------------------------------------------------------------
-# Constants (fixed, do not modify)
-# ---------------------------------------------------------------------------
+HORIZONS = [3, 6, 12]
+PRECIP_THRESHOLD_LIGHT = 0.1
+PRECIP_THRESHOLD_HEAVY = 2.0
+CLASS_NAMES = ["no_rain", "light_rain", "heavy_rain"]
+N_CLASSES = 3
 
-TARGET_SR = 48000           # resample everything to 48 kHz for consistency
-SEGMENT_SECONDS = 10        # each analysis segment is 10 seconds
-SEGMENT_SAMPLES = TARGET_SR * SEGMENT_SECONDS
-N_FFT = 2048
-HOP_LENGTH = 512
-N_MELS = 128
-F_MIN = 50                  # min freq Hz — below is self-noise
-F_MAX = 24000               # max freq Hz — Nyquist at 48kHz
-
-TIME_BUDGET = 180           # experiment time budget in seconds (3 minutes)
-
-# Marine frequency bands (ecological significance)
-BAND_LOW = (50, 2000)       # ships, fish vocalizations, whale calls
-BAND_MID = (2000, 20000)    # snapping shrimp, dolphin whistles
-BAND_HIGH = (20000, 24000)  # echolocation clicks
-
-# ---------------------------------------------------------------------------
-# Data directories
-# ---------------------------------------------------------------------------
+VAL_FRACTION = 0.2
+TIME_BUDGET = 300
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
-RAW_DIR = os.path.join(DATA_DIR, "raw")
+STATION_DIR = os.path.join(DATA_DIR, "weather_stations")
 CACHE_DIR = os.path.join(DATA_DIR, "cache")
 RESULTS_DIR = os.path.join(DATA_DIR, "results")
 
-UNITS = {
-    "5783": {"sample_rate": 144000, "subdir": "5783"},
-    "6478": {"sample_rate": 96000,  "subdir": "6478"},
-    "pilot": {"sample_rate": 48000, "subdir": "Music_Soundtrap_Pilot"},
+STATION_NAMES = ["CER", "JUN", "MERC", "MIRA"]
+
+COLUMN_RENAME = {
+    'TIMESTAMP': 'datetime',
+    'Rain_mm_Tot': 'precip',
+    'AirTC_Avg': 'temp',
+    'AirTC_Max': 'temp_max',
+    'AirTC_Min': 'temp_min',
+    'RH_Avg': 'humidity',
+    'RH_Max': 'humidity_max',
+    'RH_Min': 'humidity_min',
+    'WS_ms_Avg': 'wind_speed',
+    'WS_ms_Max': 'wind_speed_max',
+    'WS_ms_Min': 'wind_speed_min',
+    'WindDir': 'wind_dir',
+    'WindDir_Avg': 'wind_dir_avg',
+    'WindDir_Max': 'wind_dir_max',
+    'WindDir_Min': 'wind_dir_min',
+    'SlrkW_Avg': 'solar_kw',
+    'SlrW_Max': 'solar_max',
+    'SlrW_Min': 'solar_min',
+    'SlrMJ_Tot': 'solar_mj_tot',
+    'NR_Wm2_Avg': 'net_radiation',
+    'NR_Wm2_Max': 'net_radiation_max',
+    'NR_Wm2_Min': 'net_radiation_min',
+    'VW': 'soil_moisture_1',
+    'VW_Avg': 'soil_moisture_1',
+    'VW_2': 'soil_moisture_2',
+    'VW_2_Avg': 'soil_moisture_2',
+    'VW_3': 'soil_moisture_3',
+    'VW_3_Avg': 'soil_moisture_3',
+    'LWmV_Avg': 'leaf_wetness_mv',
+    'LWMDry_Tot': 'leaf_dry_min',
+    'LWMCon_Tot': 'leaf_condensation_min',
+    'LWMWet_Tot': 'leaf_wet_min',
+    'BattV_Avg': 'battery_v',
+    'PTemp_C_Avg': 'panel_temp',
 }
 
-# ---------------------------------------------------------------------------
-# Data discovery and loading
-# ---------------------------------------------------------------------------
-
-def find_wav_files(data_dir=None):
-    """Find all WAV files across all units. Returns list of dicts."""
-    if data_dir is None:
-        data_dir = RAW_DIR
-    recordings = []
-    for unit_name, unit_info in UNITS.items():
-        unit_dir = os.path.join(data_dir, unit_info["subdir"])
-        if not os.path.isdir(unit_dir):
-            continue
-        for fname in sorted(os.listdir(unit_dir)):
-            if not fname.lower().endswith(".wav"):
-                continue
-            path = os.path.join(unit_dir, fname)
-            info = sf.info(path)
-            recordings.append({
-                "path": path, "filename": fname, "unit": unit_name,
-                "sample_rate": info.samplerate, "duration_s": info.duration,
-                "channels": info.channels, "frames": info.frames,
-            })
-    return recordings
+SUM_COLS = {'precip', 'solar_mj_tot', 'leaf_dry_min', 'leaf_condensation_min', 'leaf_wet_min'}
+MAX_COLS = {'temp_max', 'humidity_max', 'wind_speed_max', 'wind_dir_max', 'solar_max',
+            'net_radiation_max'}
+MIN_COLS = {'temp_min', 'humidity_min', 'wind_speed_min', 'wind_dir_min', 'solar_min',
+            'net_radiation_min'}
 
 
-def load_audio(path, sr=TARGET_SR, duration_s=None, offset_s=0.0):
-    """Load WAV, resample to target SR, return (audio_float32, sr)."""
-    orig_sr = sf.info(path).samplerate
-    start = int(offset_s * orig_sr)
-    stop = int((offset_s + duration_s) * orig_sr) if duration_s else None
-    audio, _ = sf.read(path, dtype="float32", start=start, stop=stop)
-    if audio.ndim > 1:
-        audio = audio.mean(axis=1)
-    if orig_sr != sr:
-        audio = librosa.resample(audio, orig_sr=orig_sr, target_sr=sr)
-    return audio, sr
+def classify_precip(values):
+    values = np.asarray(values, dtype=np.float64)
+    classes = np.zeros(len(values), dtype=np.int64)
+    classes[values >= PRECIP_THRESHOLD_LIGHT] = 1
+    classes[values > PRECIP_THRESHOLD_HEAVY] = 2
+    return classes
 
 
-def segment_audio(audio, sr=TARGET_SR, segment_seconds=SEGMENT_SECONDS, overlap=0.0):
-    """Split audio into fixed-length segments. Last is zero-padded."""
-    seg_len = int(sr * segment_seconds)
-    hop = int(seg_len * (1 - overlap))
-    segments = []
-    for start in range(0, len(audio), hop):
-        seg = audio[start:start + seg_len]
-        if len(seg) < seg_len:
-            seg = np.pad(seg, (0, seg_len - len(seg)))
-        segments.append(seg)
-    return segments
+def load_single_station(filepath, station_name=None):
+    df = pd.read_csv(filepath, na_values=['NA', 'NAN', 'nan', '', 'NaN'])
+
+    rename_map = {}
+    for orig, new in COLUMN_RENAME.items():
+        if orig in df.columns:
+            rename_map[orig] = new
+    df = df.rename(columns=rename_map)
+
+    if 'datetime' in df.columns:
+        df['datetime'] = pd.to_datetime(df['datetime'], errors='coerce')
+        df = df.dropna(subset=['datetime'])
+        df = df.sort_values('datetime')
+        df = df.set_index('datetime')
+
+    drop_cols = [c for c in ['RECORD', 'battery_v', 'panel_temp'] if c in df.columns]
+    df = df.drop(columns=drop_cols, errors='ignore')
+
+    non_numeric = df.select_dtypes(exclude=[np.number]).columns
+    df = df.drop(columns=non_numeric, errors='ignore')
+
+    if station_name:
+        df['station_id'] = STATION_NAMES.index(station_name) if station_name in STATION_NAMES else 0
+
+    return df
 
 
-def highpass_filter(audio, sr=TARGET_SR, cutoff_hz=50, order=4):
-    """Remove DC offset and low-frequency self-noise."""
-    from scipy.signal import butter, sosfilt
-    sos = butter(order, cutoff_hz, btype="high", fs=sr, output="sos")
-    return sosfilt(sos, audio).astype(np.float32)
+def resample_to_hourly(df):
+    agg_dict = {}
+    for col in df.columns:
+        if col == 'station_id':
+            agg_dict[col] = 'first'
+        elif col in SUM_COLS:
+            agg_dict[col] = 'sum'
+        elif col in MAX_COLS:
+            agg_dict[col] = 'max'
+        elif col in MIN_COLS:
+            agg_dict[col] = 'min'
+        else:
+            agg_dict[col] = 'mean'
+
+    hourly = df.resample('1h').agg(agg_dict)
+    return hourly
 
 
-# ---------------------------------------------------------------------------
-# Feature utilities (available to experiment.py)
-# ---------------------------------------------------------------------------
+def load_all_stations(station_dir=None):
+    if station_dir is None:
+        station_dir = STATION_DIR
 
-def compute_melspec(audio, sr=TARGET_SR):
-    """Mel spectrogram in dB. Returns 2D array (n_mels, time_frames)."""
-    S = librosa.feature.melspectrogram(
-        y=audio, sr=sr, n_fft=N_FFT, hop_length=HOP_LENGTH,
-        n_mels=N_MELS, fmin=F_MIN, fmax=F_MAX,
-    )
-    return librosa.power_to_db(S, ref=np.max)
+    csv_files = sorted(Path(station_dir).glob("*.csv"))
+    if not csv_files:
+        return None
 
+    all_frames = []
+    for fpath in csv_files:
+        station_name = fpath.stem.split('_')[0]
+        print(f"  Loading: {fpath.name} (station={station_name})")
+        df = load_single_station(fpath, station_name)
+        print(f"    Raw: {len(df)} rows, {df.index.min()} to {df.index.max()}")
 
-def compute_band_power(audio, sr=TARGET_SR):
-    """Mean power (dB) in each ecological frequency band."""
-    from scipy.signal import welch
-    freqs, psd = welch(audio, fs=sr, nperseg=N_FFT)
-    powers = {}
-    for name, (flo, fhi) in [("low", BAND_LOW), ("mid", BAND_MID), ("high", BAND_HIGH)]:
-        mask = (freqs >= flo) & (freqs < fhi)
-        powers[name] = float(10 * np.log10(np.mean(psd[mask]) + 1e-12)) if mask.any() else -120.0
-    return powers
+        hourly = resample_to_hourly(df)
+        hourly['precip'] = hourly['precip'].fillna(0.0)
+        print(f"    Hourly: {len(hourly)} rows")
+        all_frames.append(hourly)
 
-
-def compute_rms(audio):
-    return float(np.sqrt(np.mean(audio ** 2)))
+    merged = pd.concat(all_frames, ignore_index=False)
+    merged = merged.sort_index()
+    return merged
 
 
-# ---------------------------------------------------------------------------
-# Evaluation metrics (DO NOT CHANGE)
-# ---------------------------------------------------------------------------
+def create_horizon_targets(df, horizons=None):
+    if horizons is None:
+        horizons = HORIZONS
 
-def evaluate_clustering(labels, features, method_name=""):
-    """
-    Evaluate clustering quality. Higher composite_score is better.
+    target_cols = []
+    for h in horizons:
+        col_name = f'target_{h}h'
+        future_precip = df['precip'].shift(-h)
+        df[col_name] = classify_precip(future_precip.values)
+        df.loc[future_precip.isna(), col_name] = -1
+        target_cols.append(col_name)
 
-    composite_score = 0.5 * silhouette + 0.3 * ch_norm + 0.2 * coverage
-    """
-    from sklearn.metrics import silhouette_score, calinski_harabasz_score
-
-    labels = np.asarray(labels)
-    features = np.asarray(features)
-    n_total = len(labels)
-    mask = labels >= 0
-    n_clustered = mask.sum()
-    n_noise = n_total - n_clustered
-    unique_labels = set(labels[mask])
-    n_clusters = len(unique_labels)
-    coverage = n_clustered / n_total if n_total > 0 else 0.0
-
-    result = {
-        "method": method_name, "n_clusters": n_clusters,
-        "n_noise": int(n_noise), "n_total": n_total, "coverage": coverage,
-    }
-
-    if n_clusters < 2 or n_clustered < 2:
-        result.update(silhouette=-1.0, calinski_harabasz=0.0, composite_score=-1.0)
-        return result
-
-    sil = silhouette_score(features[mask], labels[mask])
-    ch = calinski_harabasz_score(features[mask], labels[mask])
-    ch_norm = 1.0 - 1.0 / (1.0 + ch / 100.0)
-    composite = 0.5 * sil + 0.3 * ch_norm + 0.2 * coverage
-
-    result.update(silhouette=float(sil), calinski_harabasz=float(ch),
-                  composite_score=float(composite))
-    return result
+    return df, target_cols
 
 
-def evaluate_discovery(labels, metadata, features, segments=None):
-    """
-    Evaluate ecological discovery quality beyond raw clustering metrics.
-    Returns dict with discovery insights. This is for logging — NOT the
-    primary keep/discard metric, but valuable for the hackathon presentation.
+def temporal_split(df, val_fraction=VAL_FRACTION):
+    n = len(df)
+    split_idx = int(n * (1 - val_fraction))
+    train = df.iloc[:split_idx].copy()
+    val = df.iloc[split_idx:].copy()
+    return train, val
 
-    Measures:
-    - temporal_spread: do clusters span multiple time periods?
-    - unit_diversity: do clusters contain data from multiple hydrophones?
-    - band_separation: do clusters separate frequency bands?
-    - n_interesting: segments with high acoustic activity
-    """
-    labels = np.asarray(labels)
-    n_clusters = len(set(labels[labels >= 0]))
 
-    # Temporal spread: how many unique files does each cluster span?
-    temporal_spreads = []
-    unit_diversities = []
-    for c in set(labels[labels >= 0]):
-        cmask = labels == c
-        cluster_meta = [metadata[i] for i in range(len(metadata)) if cmask[i]]
-        unique_files = len(set(m["file"] for m in cluster_meta))
-        unique_units = len(set(m["unit"] for m in cluster_meta))
-        temporal_spreads.append(unique_files)
-        unit_diversities.append(unique_units)
+def get_feature_columns(df):
+    exclude = {'precip', '_source_file'}
+    exclude.update(c for c in df.columns if c.startswith('target_'))
+    feature_cols = [c for c in df.select_dtypes(include=[np.number]).columns
+                    if c not in exclude]
+    return feature_cols
 
-    # Band separation: compute per-cluster mean band powers if we have segments
-    band_info = {}
-    if segments is not None:
-        for c in sorted(set(labels[labels >= 0])):
-            cmask = labels == c
-            cluster_segs = [segments[i] for i in range(len(segments)) if cmask[i]]
-            sample = cluster_segs[:10]  # sample for speed
-            powers = [compute_band_power(s) for s in sample]
-            band_info[f"cluster_{c}"] = {
-                "low_db": float(np.mean([p["low"] for p in powers])),
-                "mid_db": float(np.mean([p["mid"] for p in powers])),
-                "high_db": float(np.mean([p["high"] for p in powers])),
-                "n_segments": int(cmask.sum()),
-            }
+
+def build_dataset(station_dir=None, horizons=None):
+    if horizons is None:
+        horizons = HORIZONS
+
+    print("Loading station data...")
+    df = load_all_stations(station_dir)
+    if df is None:
+        return None
+
+    print(f"  Merged shape: {df.shape}")
+    print(f"  Columns: {list(df.columns)}")
+
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    df[numeric_cols] = df[numeric_cols].interpolate(method='linear', limit=6)
+
+    print("Creating horizon targets...")
+    df, target_cols = create_horizon_targets(df, horizons)
+
+    valid_mask = (df[target_cols] >= 0).all(axis=1)
+    df = df[valid_mask]
+    print(f"  Valid samples: {len(df)}")
+
+    print("Splitting train/val...")
+    train_df, val_df = temporal_split(df)
+    print(f"  Train: {len(train_df)}, Val: {len(val_df)}")
+
+    for h in horizons:
+        col = f'target_{h}h'
+        counts = train_df[col].value_counts().sort_index()
+        print(f"  Train target_{h}h distribution: {dict(counts)}")
 
     return {
-        "n_clusters": n_clusters,
-        "mean_temporal_spread": float(np.mean(temporal_spreads)) if temporal_spreads else 0,
-        "mean_unit_diversity": float(np.mean(unit_diversities)) if unit_diversities else 0,
-        "band_profiles": band_info,
+        'train_df': train_df,
+        'val_df': val_df,
+        'feature_columns': get_feature_columns(train_df),
+        'target_columns': [f'target_{h}h' for h in horizons],
+        'horizons': horizons,
     }
 
 
-# ---------------------------------------------------------------------------
-# Dataset builder
-# ---------------------------------------------------------------------------
+def evaluate_predictions(y_true_dict, y_pred_dict, method_name=""):
+    results = {'method': method_name}
+    f1_scores = []
 
-def build_dataset(data_dir=None, max_files=None, segment_seconds=SEGMENT_SECONDS):
-    """
-    Load all recordings, segment them, return (segments, metadata).
-    segments: list of np.array (each SEGMENT_SAMPLES long)
-    metadata: list of dicts {file, unit, segment_idx, offset_s, path}
-    """
-    recordings = find_wav_files(data_dir)
-    if max_files:
-        recordings = recordings[:max_files]
+    for h in HORIZONS:
+        key = f'{h}h'
+        if key not in y_true_dict or key not in y_pred_dict:
+            continue
 
-    segments = []
-    metadata = []
-    print(f"Loading {len(recordings)} recordings...")
-    for rec in recordings:
-        print(f"  {rec['unit']}/{rec['filename']} ({rec['duration_s']:.0f}s @ {rec['sample_rate']}Hz)")
-        audio, sr = load_audio(rec["path"])
-        audio = highpass_filter(audio, sr)
-        file_segments = segment_audio(audio, sr, segment_seconds)
-        for i, seg in enumerate(file_segments):
-            segments.append(seg)
-            metadata.append({
-                "file": rec["filename"], "unit": rec["unit"],
-                "segment_idx": i, "offset_s": i * segment_seconds,
-                "path": rec["path"],
-            })
-    print(f"Total segments: {len(segments)} ({segment_seconds}s each)")
-    return segments, metadata
+        y_true = np.asarray(y_true_dict[key])
+        y_pred = np.asarray(y_pred_dict[key])
 
+        mask = y_true >= 0
+        y_true = y_true[mask]
+        y_pred = y_pred[mask]
 
-# ---------------------------------------------------------------------------
-# Cache utilities
-# ---------------------------------------------------------------------------
+        f1 = f1_score(y_true, y_pred, average='weighted', zero_division=0)
+        f1_scores.append(f1)
 
-def get_cache_path(key, suffix=".npy"):
-    os.makedirs(CACHE_DIR, exist_ok=True)
-    return os.path.join(CACHE_DIR, f"{key}{suffix}")
+        results[f'f1_{h}h'] = float(f1)
+        results[f'n_samples_{h}h'] = int(len(y_true))
+
+        class_counts_true = {CLASS_NAMES[i]: int((y_true == i).sum()) for i in range(N_CLASSES)}
+        class_counts_pred = {CLASS_NAMES[i]: int((y_pred == i).sum()) for i in range(N_CLASSES)}
+        results[f'true_dist_{h}h'] = class_counts_true
+        results[f'pred_dist_{h}h'] = class_counts_pred
+
+    results['composite_score'] = float(np.mean(f1_scores)) if f1_scores else 0.0
+    results['n_horizons'] = len(f1_scores)
+    return results
 
 
-# ---------------------------------------------------------------------------
-# Main (data prep / verification)
-# ---------------------------------------------------------------------------
+def print_detailed_report(y_true_dict, y_pred_dict):
+    for h in HORIZONS:
+        key = f'{h}h'
+        if key not in y_true_dict:
+            continue
+        y_true = np.asarray(y_true_dict[key])
+        y_pred = np.asarray(y_pred_dict[key])
+        mask = y_true >= 0
+        print(f"\n--- Classification Report: {h}h horizon ---")
+        print(classification_report(y_true[mask], y_pred[mask],
+                                     target_names=CLASS_NAMES, zero_division=0))
+
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("Marine Acoustic Autoresearch — Data Preparation")
+    print("Precipitation Nowcasting — Data Preparation")
     print(f"Device: {DEVICE}")
     print("=" * 60)
 
-    recordings = find_wav_files()
-    if not recordings:
-        print(f"\nNo WAV files found in {RAW_DIR}")
-        print(f"Expected: {RAW_DIR}/5783/*.wav, {RAW_DIR}/6478/*.wav, {RAW_DIR}/Music_Soundtrap_Pilot/*.wav")
-        sys.exit(1)
-
-    print(f"\nFound {len(recordings)} recordings:")
-    total_duration = 0
-    for rec in recordings:
-        print(f"  [{rec['unit']:>5}] {rec['filename']:30s} {rec['duration_s']:7.1f}s @ {rec['sample_rate']:6d}Hz")
-        total_duration += rec["duration_s"]
-    print(f"\nTotal audio: {total_duration/3600:.1f} hours")
-
+    os.makedirs(STATION_DIR, exist_ok=True)
     os.makedirs(CACHE_DIR, exist_ok=True)
     os.makedirs(RESULTS_DIR, exist_ok=True)
 
-    print(f"\nBuilding segments (sr={TARGET_SR}, seg={SEGMENT_SECONDS}s)...")
-    segments, metadata = build_dataset()
+    result = build_dataset()
+    if result is None:
+        print(f"\nNo data files found in {STATION_DIR}")
+        sys.exit(1)
 
-    with open(os.path.join(CACHE_DIR, "segment_metadata.json"), "w") as f:
-        json.dump(metadata, f, indent=2)
+    print(f"\nFeature columns ({len(result['feature_columns'])}):")
+    for col in result['feature_columns']:
+        print(f"  {col}")
+
+    print(f"\nTarget columns: {result['target_columns']}")
+    print(f"\nDate range (train): {result['train_df'].index.min()} to {result['train_df'].index.max()}")
+    print(f"Date range (val):   {result['val_df'].index.min()} to {result['val_df'].index.max()}")
+
+    precip = result['train_df']['precip']
+    print(f"\nPrecip stats (train):")
+    print(f"  Zero: {(precip == 0).sum()} ({(precip == 0).mean()*100:.1f}%)")
+    print(f"  Light (0.1-2mm): {((precip >= 0.1) & (precip <= 2.0)).sum()}")
+    print(f"  Heavy (>2mm): {(precip > 2.0).sum()}")
+    print(f"  Max: {precip.max():.1f}mm, Mean: {precip.mean():.3f}mm")
 
     print("\n" + "=" * 60)
     print("Ready to run experiments: python3 experiment.py")

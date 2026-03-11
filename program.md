@@ -1,118 +1,111 @@
-# autoresearch-marine
+# autoresearch-precip
 
-Autonomous marine acoustic research on Apple Silicon. The agent iterates on
-`experiment.py` to discover ecological patterns in Galapagos hydrophone data,
-progressing through hackathon tiers naturally.
+Autonomous precipitation nowcasting research on Apple Silicon. The agent
+iterates on `experiment.py` to improve precipitation forecasting on Galápagos
+weather station data, progressing through hackathon tiers.
 
 ## Setup
 
 1. **Run tag**: propose a tag (e.g. `mar10`). Branch: `autoresearch/<tag>`.
 2. **Create branch**: `git checkout -b autoresearch/<tag>`.
 3. **Read files**: `prepare.py` (fixed), `experiment.py` (you edit), this file.
-4. **Verify data**: `data/raw/` must contain WAV files. If not, tell human.
+4. **Verify data**: `data/weather_stations/` must contain CSVs. If not, tell human.
 5. **Init results.tsv**: header row only. Baseline recorded after first run.
 6. **Go**.
 
 ## Context
 
-Underwater recordings from 3 SoundTrap hydrophones in San Cristobal Bay, Galapagos:
+Weather station observations from San Cristóbal Island, Galápagos. Multiple
+stations recording temperature, humidity, pressure, wind, solar radiation,
+and precipitation at hourly resolution.
 
-| Unit | Sample Rate | Files | Duration/File |
-|------|------------|-------|---------------|
-| 5783 | 144 kHz | 2 | ~20 min |
-| 6478 | 96 kHz | 4 | ~10 min |
-| Pilot | 48 kHz | 5 | ~5 min |
+**Task**: Predict precipitation class at 3h, 6h, and 12h horizons.
 
-Sound types present:
-- **Biological**: whale calls, dolphin whistles/clicks, fish drums, snapping shrimp
-- **Anthropogenic**: boat engines, sonar
-- **Ambient**: waves, rain, currents
+**Classes** (based on mm/h):
+| Class | Name | Threshold |
+|-------|------|-----------|
+| 0 | no_rain | < 0.1 mm |
+| 1 | light_rain | 0.1 – 2.0 mm |
+| 2 | heavy_rain | > 2.0 mm |
 
-Frequency bands:
-- **LOW** (50-2000 Hz): ships, whale calls, fish
-- **MID** (2-20 kHz): shrimp, dolphins, reef
-- **HIGH** (20-24 kHz): echolocation clicks
+**Climate context**: San Cristóbal has two seasons:
+- **Warm/wet** (Jan–May): periodic heavy convective rain
+- **Cool/dry** (Jun–Dec): persistent light drizzle (garúa) from stratocumulus
+
+This seasonality matters — different model strategies may dominate per season.
 
 ## Platform
 
-Apple Silicon (MPS). Available packages: numpy, scipy, librosa, scikit-learn,
-soundfile, umap-learn, hdbscan, matplotlib, torch (MPS backend).
+Apple Silicon (MPS). Available packages: numpy, scipy, pandas, scikit-learn,
+xgboost, lightgbm, matplotlib, torch (MPS backend), statsmodels.
 
 No CUDA. No `torch.compile`. If using PyTorch, use `torch.device("mps")`.
 
 ## The Hackathon Tiers
 
-The experiment naturally progresses through tiers. You don't have to follow
-them in order — if a Tier 2 idea will improve the score, jump to it.
+### Tier 1: Classical ML (starting point)
+- Lag features, rolling statistics, pressure tendencies
+- Random Forest, Gradient Boosted Trees (XGBoost/LightGBM)
+- Feature importance analysis
+- **Goal**: establish strong baseline, identify key predictors
 
-### Tier 1: Acoustic Landscape Indices (starting point)
-- MFCCs, spectral features, band powers, entropy
-- NDSI (Normalized Difference Soundscape Index): bio vs anthro ratio
-- Temporal entropy, acoustic complexity index (ACI)
-- Clustering with UMAP + HDBSCAN
-- **Discovery goal**: identify day/night patterns, boat vs biology separation
+### Tier 2: Deep Learning Sequence Models
+- LSTM, GRU, or Transformer on hourly sequences
+- Input: sliding window of past observations → predict future classes
+- Multi-task: predict all 3 horizons simultaneously
+- Attention weights reveal which past hours matter most
+- **Goal**: capture nonlinear temporal dependencies
 
-### Tier 2: Pretrained Model Embeddings
-- PANNs (pretrained audio tagging): 2048-dim embeddings, runs on MPS
-- BirdNET / Perch embeddings (if available via pip)
-- Use embeddings as features → better clustering
-- Cosine similarity between segments for structure discovery
-- **Discovery goal**: what sound categories exist? temporal/spatial patterns?
+### Tier 3: Advanced Approaches
+- Ensemble of Tier 1 + Tier 2 models
+- Temporal attention with learnable positional encoding
+- Probabilistic forecasting (predict class probabilities, calibrate)
+- Graph neural networks if multi-station topology matters
+- Physics-informed features (Clausius-Clapeyron, lifted index)
+- **Goal**: push composite_score as high as possible
 
-### Tier 3: Custom Classifier with Active Learning
-- Use Tier 1+2 findings to bootstrap labels
-- Train a small CNN or MLP on mel spectrograms (PyTorch + MPS)
-- Active learning: cluster → human-label most uncertain → retrain → repeat
-- Fine-tune on marine-specific classes found in exploration
-- **Discovery goal**: build a working detector for species in this bay
+### Cross-Tier Combinations
+- Tier 1 feature importances guide which inputs to feed Tier 2 models
+- Tier 2 learned representations → feed into Tier 1 tree ensemble
+- Calibrated probabilities from Tier 2 → threshold optimization in Tier 1
+- Seasonal stratification: different models for wet vs dry season
 
-### Cross-Tier Combinations (the exciting part!)
-- Tier 1 indices find "interesting" segments → Tier 2 embeddings classify them
-- Tier 2 embeddings reveal clusters → Tier 3 trains on those pseudo-labels
-- Temporal patterns from Tier 1 (dawn chorus, boat schedules) contextualize Tier 3
-- Band power profiles from Tier 1 validate Tier 2/3 cluster ecological meaning
-
-## Hackathon Judging (for context — guide your research choices)
+## Hackathon Judging
 - **Originality & Innovation (30%)**: unique approaches, surprising discoveries
 - **Technical Execution (30%)**: code quality, methodology complexity
-- **Impact & Relevance (25%)**: practical applicability for conservation
-- **Presentation (15%)**: (we handle this separately)
+- **Impact & Relevance (25%)**: practical applicability for early warning
+- **Presentation (15%)**: (handled separately)
 
 ## Experimentation Rules
 
 **What you CAN do:**
 - Modify `experiment.py` — the ONLY file you edit. Everything is fair game:
-  architecture, features, models, training loops, anything.
+  features, models, architectures, training loops, ensembles, anything.
 - Use PyTorch with MPS device for neural network experiments.
-- Import any installed package (numpy, scipy, librosa, sklearn, torch, etc).
+- Import any installed package (numpy, scipy, pandas, sklearn, xgboost, etc).
 
 **What you CANNOT do:**
 - Modify `prepare.py` (fixed evaluation + data loading).
 - Install new packages (use what's available).
 - Skip the evaluation — every run must output `composite_score`.
 
-**Primary metric**: `composite_score` from `evaluate_clustering()` — higher is better.
-This is what drives keep/discard decisions.
-
-**Discovery metric**: `evaluate_discovery()` output is logged but doesn't drive
-keep/discard. However, experiments that reveal ecological patterns (temporal
-structure, species separation, boat detection) are especially valuable even if
-composite_score improves only slightly.
+**Primary metric**: `composite_score` from `evaluate_predictions()` — higher
+is better. This is the mean weighted F1 across the 3 horizons.
 
 ## Output format
 
 ```
 ---
-composite_score:  0.345678
-silhouette:       0.234567
-calinski_harabasz:123.456
-n_clusters:       5
-n_noise:          12
-coverage:         0.9500
-n_features:       47
-total_segments:   632
+composite_score:  0.456789
+f1_3h:            0.523456
+f1_6h:            0.456789
+f1_12h:           0.390123
+n_features:       156
+train_samples:    8760
+val_samples:      2190
 tier:             1
-total_seconds:    45.3
+model:            random_forest
+total_seconds:    12.3
 device:           mps
 ```
 
@@ -123,18 +116,18 @@ Extract metric: `grep "^composite_score:" run.log`
 `results.tsv` (tab-separated, 6 columns):
 
 ```
-commit	composite_score	n_clusters	tier	status	description
+commit	composite_score	f1_3h	tier	status	description
 ```
 
 Example:
 ```
-commit	composite_score	n_clusters	tier	status	description
-a1b2c3d	0.345678	5	1	keep	baseline: MFCC+UMAP+HDBSCAN
-b2c3d4e	0.412345	7	1	keep	add spectral contrast + delta MFCCs
-c3d4e5f	0.523456	8	2	keep	PANNs embeddings replace handcrafted features
-d4e5f6g	0.000000	0	2	crash	PANNs OOM on full dataset
-e5f6g7h	0.567890	6	2	keep	PANNs with batched inference
-f6g7h8i	0.612345	5	3	keep	small CNN on mel specs, pseudo-labels from Tier 2
+commit	composite_score	f1_3h	tier	status	description
+a1b2c3d	0.456789	0.523	1	keep	baseline: RF + lag features
+b2c3d4e	0.512345	0.567	1	keep	add pressure tendency + precip accumulation
+c3d4e5f	0.534567	0.589	1	keep	XGBoost replaces RF
+d4e5f6g	0.000000	0.000	2	crash	LSTM OOM on full sequence
+e5f6g7h	0.578901	0.612	2	keep	GRU with 48h lookback window
+f6g7h8i	0.623456	0.645	3	keep	ensemble: XGBoost + GRU voting
 ```
 
 ## The experiment loop
@@ -145,15 +138,14 @@ LOOP FOREVER:
 2. Edit `experiment.py` with next idea.
 3. `git commit -m "experiment: <description>"`.
 4. Run: `python3 experiment.py > run.log 2>&1`
-5. Read: `grep "^composite_score:\|^n_clusters:\|^tier:" run.log`
+5. Read: `grep "^composite_score:\|^f1_3h:\|^tier:" run.log`
 6. If empty → crash. `tail -n 50 run.log` to debug.
 7. Log to results.tsv (don't commit results.tsv).
 8. If composite_score improved → keep commit.
 9. If worse → `git reset --hard HEAD~1`.
 
-**Tier advancement**: When you've exhausted Tier N ideas (diminishing returns),
-advance to Tier N+1. Update the `TIER` variable in experiment.py. You can
-always mix approaches across tiers.
+**Tier advancement**: When diminishing returns at Tier N, advance to N+1.
+Update `TIER` in experiment.py. Mix approaches across tiers freely.
 
 **Timeout**: Kill runs exceeding 5 minutes. Treat as crash.
 
@@ -164,60 +156,35 @@ tiers. The loop runs until interrupted.
 ## Research ideas (rough priority order)
 
 ### Quick wins (Tier 1)
-1. Add spectral contrast features
-2. Add delta + delta-delta MFCCs
-3. Tune UMAP: n_neighbors=[5,10,30,50], min_dist=[0.0,0.05,0.2]
-4. Try spectral clustering or GMM with BIC
-5. Add onset strength / tempo features
-6. Compute NDSI per segment
-7. Acoustic complexity index (ACI)
-8. Robust scaling or quantile transform instead of StandardScaler
+1. Try XGBoost / LightGBM instead of Random Forest
+2. Add more lag features (48h, 72h for longer-range context)
+3. Add interaction features (humidity × pressure_tendency)
+4. Quantile transforms instead of raw values
+5. Add rate-of-change features (first differences) for temp, pressure, humidity
+6. Separate wet/dry season indicators
+7. Target encoding for hour-of-day precipitation probability
+8. Add precipitation persistence features (hours since last rain)
+9. Tune class weights to handle imbalance (heavy rain is rare)
+10. SMOTE or other oversampling for heavy rain class
 
 ### Medium effort (Tier 2)
-9. PANNs embeddings (pip install panns-inference, runs on MPS)
-10. Concatenate PANNs embeddings with Tier 1 features
-11. Cosine similarity matrix → spectral clustering
-12. t-SNE or UMAP on PANNs → visualize sound landscape
+11. GRU/LSTM on 24-48h lookback sequences
+12. 1D convolutional net on feature sequences
+13. Multi-task learning: predict all 3 horizons jointly
+14. Attention mechanism to learn which past hours matter
+15. Seq2seq: encode past sequence → decode future precipitation sequence
+16. WaveNet-style dilated causal convolutions
 
 ### Ambitious (Tier 3)
-13. Small conv autoencoder on mel specs → learned embeddings
-14. Pseudo-label from best clustering → train CNN classifier
-15. Active learning loop simulation
-16. Temporal model: segment sequences as context
+17. Ensemble: stack XGBoost + GRU predictions as meta-features
+18. Temporal Fusion Transformer
+19. Conformal prediction for calibrated prediction sets
+20. Physics-informed: Clausius-Clapeyron scaling, moist static energy
+21. Multi-station graph neural network
+22. Self-supervised pretraining on unlabeled weather sequences
 
-### Claude-as-annotator (creative cross-tier)
-Claude Opus 4.6 and Sonnet 4.6 have native audio understanding. You can send
-WAV segments directly to the Anthropic API and ask Claude to describe what it
-hears (whale calls, boat noise, shrimp clicks, silence, etc.).
-
-Use this for pseudo-labeling:
-17. Pick representative segments from each cluster (e.g. closest to centroid)
-18. Send them to Claude API with a prompt like: "Describe the underwater sounds
-    in this recording. Identify: biological sounds (species if possible),
-    anthropogenic noise, ambient conditions."
-19. Use Claude's descriptions as pseudo-labels for Tier 3 classifier training
-20. Compare Claude's labels across clusters to validate ecological meaning
-
-To call the API from experiment.py:
-```python
-import anthropic, base64
-client = anthropic.Anthropic()  # uses ANTHROPIC_API_KEY env var
-with open(wav_path, "rb") as f:
-    audio_b64 = base64.standard_b64encode(f.read()).decode("utf-8")
-response = client.messages.create(
-    model="claude-sonnet-4-6",
-    max_tokens=1024,
-    messages=[{"role": "user", "content": [
-        {"type": "media", "source": {"type": "base64", "media_type": "audio/wav", "data": audio_b64}},
-        {"type": "text", "text": "Describe the underwater sounds..."}
-    ]}],
-)
-```
-This is especially powerful for originality points — using an LLM to annotate
-marine bioacoustics data is novel and directly applicable to conservation.
-
-### Discovery-focused
-21. Day vs night comparison (extract timestamps from filenames)
-22. Per-unit acoustic profiles (do hydrophones hear different things?)
-23. Boat detection (high LOW band + low MID/HIGH)
-24. Biodiversity index per recording
+### Galápagos-specific
+23. Garúa detection: persistent light drizzle has different predictors than convective rain
+24. SST proxy features (if available): ENSO affects Galápagos precipitation
+25. Diurnal cycle exploitation: convective rain peaks in afternoon
+26. Orographic effects: wind direction relative to highlands matters

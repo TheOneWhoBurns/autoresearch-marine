@@ -1,11 +1,12 @@
 """
-Marine Acoustic Autoresearch — Experiment Script
+Precipitation Nowcasting Autoresearch — Experiment Script
 THIS IS THE ONLY FILE THE AGENT MODIFIES.
 
-Starting point: Tier 1 acoustic indices baseline.
-The agent evolves this through Tiers 1-3, choosing the best approach.
+Starting point: Tier 1 random forest baseline with lag features.
+The agent evolves this through Tiers 1-3, improving the composite_score.
 
-Metric: composite_score from prepare.evaluate_clustering() — higher is better.
+Metric: composite_score = mean weighted F1 across 3h/6h/12h horizons.
+Higher is better.
 
 Usage: python3 experiment.py > run.log 2>&1
 """
@@ -14,271 +15,229 @@ import os
 import time
 import json
 import numpy as np
+import pandas as pd
 
 from prepare import (
-    TARGET_SR, SEGMENT_SECONDS, SEGMENT_SAMPLES,
-    N_FFT, HOP_LENGTH, N_MELS, F_MIN, F_MAX,
+    HORIZONS, N_CLASSES, CLASS_NAMES,
+    PRECIP_THRESHOLD_LIGHT, PRECIP_THRESHOLD_HEAVY,
     TIME_BUDGET, CACHE_DIR, RESULTS_DIR, DEVICE,
-    BAND_LOW, BAND_MID, BAND_HIGH,
-    find_wav_files, load_audio, segment_audio, highpass_filter,
-    compute_melspec, compute_band_power, compute_rms,
-    evaluate_clustering, evaluate_discovery,
-    build_dataset,
+    build_dataset, evaluate_predictions, print_detailed_report,
+    get_feature_columns,
 )
 
-# ---------------------------------------------------------------------------
-# TIER: current approach (agent updates this as it progresses)
-# ---------------------------------------------------------------------------
-TIER = 1  # 1=acoustic indices, 2=pretrained embeddings, 3=custom classifier
+TIER = 1
 
-# ---------------------------------------------------------------------------
-# Hyperparameters
-# ---------------------------------------------------------------------------
+LAG_HOURS = [1, 2, 3, 6, 12, 24]
+ROLLING_WINDOWS = [3, 6, 12, 24]
+USE_TIME_FEATURES = True
+USE_LAGS = True
+USE_ROLLING = True
+USE_WIND_COMPONENTS = True
 
-# Feature extraction
-N_MFCC = 20
-USE_BAND_POWER = True
-USE_SPECTRAL = True
-USE_ZCR = True
-USE_RMS = True
-
-# Dimensionality reduction
-REDUCER = "umap"        # "umap", "pca", or "none"
-N_COMPONENTS = 10
-UMAP_N_NEIGHBORS = 15
-UMAP_MIN_DIST = 0.1
-UMAP_METRIC = "euclidean"
-
-# Clustering
-CLUSTERER = "hdbscan"   # "hdbscan", "kmeans", "spectral", "gmm"
-HDBSCAN_MIN_CLUSTER = 5
-HDBSCAN_MIN_SAMPLES = 3
-KMEANS_K = 8
-
-# ---------------------------------------------------------------------------
-# Feature extraction (Tier 1: acoustic indices)
-# ---------------------------------------------------------------------------
-
-def extract_features(segments):
-    """Extract feature vectors from audio segments. Returns (N, D) array."""
-    import librosa
-
-    features_list = []
-    for i, seg in enumerate(segments):
-        feats = []
-
-        # MFCCs (mean + std)
-        mfcc = librosa.feature.mfcc(y=seg, sr=TARGET_SR, n_mfcc=N_MFCC,
-                                     n_fft=N_FFT, hop_length=HOP_LENGTH)
-        feats.extend(np.mean(mfcc, axis=1))
-        feats.extend(np.std(mfcc, axis=1))
-
-        # Ecological band powers
-        if USE_BAND_POWER:
-            bp = compute_band_power(seg)
-            feats.extend([bp["low"], bp["mid"], bp["high"]])
-
-        # Spectral shape
-        if USE_SPECTRAL:
-            centroid = librosa.feature.spectral_centroid(y=seg, sr=TARGET_SR,
-                                                         n_fft=N_FFT, hop_length=HOP_LENGTH)
-            bandwidth = librosa.feature.spectral_bandwidth(y=seg, sr=TARGET_SR,
-                                                            n_fft=N_FFT, hop_length=HOP_LENGTH)
-            rolloff = librosa.feature.spectral_rolloff(y=seg, sr=TARGET_SR,
-                                                        n_fft=N_FFT, hop_length=HOP_LENGTH)
-            feats.extend([np.mean(centroid), np.std(centroid),
-                          np.mean(bandwidth), np.std(bandwidth),
-                          np.mean(rolloff), np.std(rolloff)])
-
-        # Zero crossing rate
-        if USE_ZCR:
-            zcr = librosa.feature.zero_crossing_rate(seg, frame_length=N_FFT,
-                                                      hop_length=HOP_LENGTH)
-            feats.extend([np.mean(zcr), np.std(zcr)])
-
-        # RMS energy
-        if USE_RMS:
-            feats.append(compute_rms(seg))
-
-        features_list.append(feats)
-        if (i + 1) % 100 == 0:
-            print(f"  Features: {i+1}/{len(segments)}")
-
-    return np.array(features_list, dtype=np.float32)
+MODEL = "random_forest"
+RF_N_ESTIMATORS = 200
+RF_MAX_DEPTH = 15
+RF_MIN_SAMPLES_LEAF = 5
 
 
-# ---------------------------------------------------------------------------
-# Dimensionality reduction
-# ---------------------------------------------------------------------------
+def engineer_features(df, feature_cols):
+    df = df.copy()
 
-def reduce_dimensions(features):
-    """Reduce feature dimensions. Returns (N, D') array."""
-    from sklearn.preprocessing import StandardScaler
-    features_scaled = StandardScaler().fit_transform(features)
+    if USE_TIME_FEATURES and isinstance(df.index, pd.DatetimeIndex):
+        hour = df.index.hour
+        df['hour_sin'] = np.sin(2 * np.pi * hour / 24)
+        df['hour_cos'] = np.cos(2 * np.pi * hour / 24)
+        month = df.index.month
+        df['month_sin'] = np.sin(2 * np.pi * month / 12)
+        df['month_cos'] = np.cos(2 * np.pi * month / 12)
+        df['dayofyear_sin'] = np.sin(2 * np.pi * df.index.dayofyear / 365.25)
+        df['dayofyear_cos'] = np.cos(2 * np.pi * df.index.dayofyear / 365.25)
 
-    if REDUCER == "none":
-        return features_scaled
-    elif REDUCER == "umap":
-        import umap
-        return umap.UMAP(
-            n_components=N_COMPONENTS, n_neighbors=UMAP_N_NEIGHBORS,
-            min_dist=UMAP_MIN_DIST, metric=UMAP_METRIC, random_state=42,
-        ).fit_transform(features_scaled)
-    elif REDUCER == "pca":
-        from sklearn.decomposition import PCA
-        return PCA(n_components=N_COMPONENTS, random_state=42).fit_transform(features_scaled)
+    key_cols = [c for c in ['temp', 'humidity', 'wind_speed', 'solar_kw',
+                             'net_radiation', 'soil_moisture_1', 'leaf_wetness_mv',
+                             'precip'] if c in df.columns]
+
+    if USE_LAGS:
+        for col in key_cols:
+            for lag in LAG_HOURS:
+                df[f'{col}_lag{lag}'] = df[col].shift(lag)
+
+    if USE_ROLLING:
+        for col in key_cols:
+            for w in ROLLING_WINDOWS:
+                df[f'{col}_rmean{w}'] = df[col].rolling(w, min_periods=1).mean()
+                df[f'{col}_rstd{w}'] = df[col].rolling(w, min_periods=1).std().fillna(0)
+
+    if USE_WIND_COMPONENTS:
+        if 'wind_speed' in df.columns and 'wind_dir' in df.columns:
+            wd_rad = np.deg2rad(df['wind_dir'])
+            df['wind_u'] = df['wind_speed'] * np.sin(wd_rad)
+            df['wind_v'] = df['wind_speed'] * np.cos(wd_rad)
+
+    if 'precip' in df.columns:
+        df['precip_sum3'] = df['precip'].rolling(3, min_periods=1).sum()
+        df['precip_sum6'] = df['precip'].rolling(6, min_periods=1).sum()
+        df['precip_sum12'] = df['precip'].rolling(12, min_periods=1).sum()
+        df['precip_sum24'] = df['precip'].rolling(24, min_periods=1).sum()
+        df['precip_max3'] = df['precip'].rolling(3, min_periods=1).max()
+        df['precip_max6'] = df['precip'].rolling(6, min_periods=1).max()
+        df['precip_any_last3'] = (df['precip'].rolling(3, min_periods=1).sum() > 0).astype(int)
+        df['precip_any_last6'] = (df['precip'].rolling(6, min_periods=1).sum() > 0).astype(int)
+        df['hours_since_rain'] = df['precip'].apply(lambda x: 0 if x > 0.1 else 1).cumsum()
+
+    if 'temp' in df.columns and 'humidity' in df.columns:
+        t = df['temp']
+        rh = df['humidity'].clip(1, 100)
+        df['dewpoint'] = t - ((100 - rh) / 5.0)
+
+    if 'temp' in df.columns:
+        df['temp_tendency_3h'] = df['temp'] - df['temp'].shift(3)
+        df['temp_tendency_6h'] = df['temp'] - df['temp'].shift(6)
+
+    if 'humidity' in df.columns:
+        df['humidity_tendency_3h'] = df['humidity'] - df['humidity'].shift(3)
+
+    if 'solar_kw' in df.columns:
+        df['solar_tendency_3h'] = df['solar_kw'] - df['solar_kw'].shift(3)
+
+    return df
+
+
+def get_all_feature_cols(df):
+    exclude = {'precip', '_source_file'}
+    exclude.update(c for c in df.columns if c.startswith('target_'))
+    return [c for c in df.select_dtypes(include=[np.number]).columns if c not in exclude]
+
+
+def train_and_predict(X_train, y_train, X_val):
+    if MODEL == "random_forest":
+        from sklearn.ensemble import RandomForestClassifier
+        clf = RandomForestClassifier(
+            n_estimators=RF_N_ESTIMATORS,
+            max_depth=RF_MAX_DEPTH,
+            min_samples_leaf=RF_MIN_SAMPLES_LEAF,
+            class_weight='balanced',
+            random_state=42,
+            n_jobs=-1,
+        )
+        clf.fit(X_train, y_train)
+        return clf.predict(X_val), clf
     else:
-        raise ValueError(f"Unknown reducer: {REDUCER}")
+        raise ValueError(f"Unknown model: {MODEL}")
 
-
-# ---------------------------------------------------------------------------
-# Clustering
-# ---------------------------------------------------------------------------
-
-def cluster(features_reduced):
-    """Cluster features. Returns labels array."""
-    if CLUSTERER == "hdbscan":
-        import hdbscan
-        return hdbscan.HDBSCAN(
-            min_cluster_size=HDBSCAN_MIN_CLUSTER,
-            min_samples=HDBSCAN_MIN_SAMPLES,
-        ).fit_predict(features_reduced)
-    elif CLUSTERER == "kmeans":
-        from sklearn.cluster import KMeans
-        return KMeans(n_clusters=KMEANS_K, random_state=42, n_init=10).fit_predict(features_reduced)
-    else:
-        raise ValueError(f"Unknown clusterer: {CLUSTERER}")
-
-
-# ---------------------------------------------------------------------------
-# Analysis
-# ---------------------------------------------------------------------------
-
-def analyze_clusters(labels, metadata, features, segments=None):
-    """Print cluster summary with ecological interpretation."""
-    unique_labels = sorted(set(labels))
-    print(f"\n{'='*60}")
-    print(f"Cluster Analysis: {len([l for l in unique_labels if l >= 0])} clusters")
-    print(f"{'='*60}")
-
-    for label in unique_labels:
-        mask = labels == label
-        count = mask.sum()
-        cluster_meta = [metadata[i] for i in range(len(metadata)) if mask[i]]
-        units = [m["unit"] for m in cluster_meta]
-        unit_counts = {u: units.count(u) for u in set(units)}
-        files = set(m["file"] for m in cluster_meta)
-
-        name = "NOISE (unclustered)" if label == -1 else f"Cluster {label}"
-        print(f"\n  {name}: {count} segments")
-        print(f"    Units: {unit_counts}")
-        print(f"    Files: {len(files)} unique")
-
-        # Band power profile for ecological interpretation
-        if segments is not None:
-            sample_indices = [i for i in range(len(labels)) if mask[i]][:5]
-            if sample_indices:
-                powers = [compute_band_power(segments[i]) for i in sample_indices]
-                avg_low = np.mean([p["low"] for p in powers])
-                avg_mid = np.mean([p["mid"] for p in powers])
-                avg_high = np.mean([p["high"] for p in powers])
-                print(f"    Band profile: LOW={avg_low:.1f}dB  MID={avg_mid:.1f}dB  HIGH={avg_high:.1f}dB")
-
-                # Ecological guess
-                if avg_low > avg_mid and avg_low > avg_high:
-                    print(f"    -> Likely: boat noise or large whale vocalizations")
-                elif avg_mid > avg_low and avg_mid > avg_high:
-                    print(f"    -> Likely: snapping shrimp, dolphin whistles, or reef activity")
-                elif avg_high > avg_mid:
-                    print(f"    -> Likely: echolocation clicks or ultrasonic biological sounds")
-
-
-# ---------------------------------------------------------------------------
-# Main experiment
-# ---------------------------------------------------------------------------
 
 def main():
     t_start = time.time()
     print("=" * 60)
-    print(f"Marine Acoustic Autoresearch — Tier {TIER}")
+    print(f"Precipitation Nowcasting — Tier {TIER}")
     print(f"Device: {DEVICE}")
     print("=" * 60)
 
     config = {
-        "tier": TIER,
-        "n_mfcc": N_MFCC, "use_band_power": USE_BAND_POWER,
-        "use_spectral": USE_SPECTRAL, "use_zcr": USE_ZCR, "use_rms": USE_RMS,
-        "reducer": REDUCER, "n_components": N_COMPONENTS,
-        "umap_n_neighbors": UMAP_N_NEIGHBORS, "umap_min_dist": UMAP_MIN_DIST,
-        "clusterer": CLUSTERER,
-        "hdbscan_min_cluster": HDBSCAN_MIN_CLUSTER,
-        "hdbscan_min_samples": HDBSCAN_MIN_SAMPLES,
+        "tier": TIER, "model": MODEL,
+        "lag_hours": LAG_HOURS, "rolling_windows": ROLLING_WINDOWS,
+        "use_time_features": USE_TIME_FEATURES,
+        "use_lags": USE_LAGS, "use_rolling": USE_ROLLING,
+        "use_wind_components": USE_WIND_COMPONENTS,
+        "rf_n_estimators": RF_N_ESTIMATORS,
+        "rf_max_depth": RF_MAX_DEPTH,
     }
     print(f"\nConfig: {json.dumps(config, indent=2)}")
 
-    # Load data
     print("\n--- Loading data ---")
-    segments, metadata = build_dataset()
+    dataset = build_dataset()
+    if dataset is None:
+        print("ERROR: No data found. Place CSVs in data/weather_stations/")
+        return
     t_load = time.time() - t_start
     print(f"Data loaded: {t_load:.1f}s")
 
-    # Extract features
-    print("\n--- Extracting features ---")
+    train_df = dataset['train_df']
+    val_df = dataset['val_df']
+    raw_feature_cols = dataset['feature_columns']
+
+    print("\n--- Engineering features ---")
     t1 = time.time()
-    features = extract_features(segments)
-    print(f"Features: {features.shape}, {time.time()-t1:.1f}s")
+    train_eng = engineer_features(train_df, raw_feature_cols)
+    val_eng = engineer_features(val_df, raw_feature_cols)
+    feat_cols = get_all_feature_cols(train_eng)
+    print(f"Features: {len(feat_cols)} columns, {time.time()-t1:.1f}s")
 
-    # Reduce dimensions
-    print("\n--- Reducing dimensions ---")
-    t1 = time.time()
-    features_reduced = reduce_dimensions(features)
-    print(f"Reduced: {features_reduced.shape}, {time.time()-t1:.1f}s")
+    max_lag = max(LAG_HOURS) if USE_LAGS else 0
+    train_eng = train_eng.iloc[max_lag:]
+    val_eng = val_eng.iloc[max_lag:]
 
-    # Cluster
-    print("\n--- Clustering ---")
-    t1 = time.time()
-    labels = cluster(features_reduced)
-    print(f"Clustering: {time.time()-t1:.1f}s")
+    train_eng = train_eng.fillna(0)
+    val_eng = val_eng.fillna(0)
 
-    # Evaluate (primary metric)
-    eval_result = evaluate_clustering(labels, features_reduced, method_name=f"tier{TIER}")
+    feat_cols = [c for c in feat_cols if c in train_eng.columns and c in val_eng.columns]
 
-    # Discovery insights
-    discovery = evaluate_discovery(labels, metadata, features_reduced, segments)
+    X_train_full = train_eng[feat_cols].values.astype(np.float32)
+    X_val_full = val_eng[feat_cols].values.astype(np.float32)
 
-    # Analysis
-    analyze_clusters(labels, metadata, features, segments)
+    X_train_full = np.nan_to_num(X_train_full, nan=0.0, posinf=0.0, neginf=0.0)
+    X_val_full = np.nan_to_num(X_val_full, nan=0.0, posinf=0.0, neginf=0.0)
 
-    # Save
+    print(f"Train samples: {len(X_train_full)}, Val samples: {len(X_val_full)}")
+
+    y_true_dict = {}
+    y_pred_dict = {}
+
+    for h in HORIZONS:
+        target_col = f'target_{h}h'
+        if target_col not in train_eng.columns:
+            print(f"WARNING: {target_col} not found, skipping")
+            continue
+
+        print(f"\n--- Training {h}h horizon model ---")
+        t1 = time.time()
+
+        y_train = train_eng[target_col].values.astype(int)
+        y_val = val_eng[target_col].values.astype(int)
+
+        train_mask = y_train >= 0
+        val_mask = y_val >= 0
+
+        preds, model = train_and_predict(
+            X_train_full[train_mask], y_train[train_mask],
+            X_val_full[val_mask],
+        )
+
+        y_true_dict[f'{h}h'] = y_val[val_mask]
+        y_pred_dict[f'{h}h'] = preds
+
+        print(f"  {h}h model trained: {time.time()-t1:.1f}s")
+
+        if hasattr(model, 'feature_importances_'):
+            importances = model.feature_importances_
+            top_idx = np.argsort(importances)[-10:][::-1]
+            print(f"  Top features:")
+            for idx in top_idx:
+                print(f"    {feat_cols[idx]}: {importances[idx]:.4f}")
+
+    eval_result = evaluate_predictions(y_true_dict, y_pred_dict, method_name=f"tier{TIER}")
+    print_detailed_report(y_true_dict, y_pred_dict)
+
     os.makedirs(RESULTS_DIR, exist_ok=True)
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     result_path = os.path.join(RESULTS_DIR, f"result_{timestamp}.json")
     with open(result_path, "w") as f:
-        json.dump({"config": config, "evaluation": eval_result, "discovery": discovery}, f, indent=2)
+        json.dump({"config": config, "evaluation": eval_result}, f, indent=2)
 
-    # Final summary (parseable — the autoresearch loop reads these)
     t_total = time.time() - t_start
     print("\n---")
     print(f"composite_score:  {eval_result['composite_score']:.6f}")
-    print(f"silhouette:       {eval_result['silhouette']:.6f}")
-    print(f"calinski_harabasz:{eval_result['calinski_harabasz']:.6f}")
-    print(f"n_clusters:       {eval_result['n_clusters']}")
-    print(f"n_noise:          {eval_result['n_noise']}")
-    print(f"coverage:         {eval_result['coverage']:.4f}")
-    print(f"n_features:       {features.shape[1]}")
-    print(f"total_segments:   {len(segments)}")
+    for h in HORIZONS:
+        key = f'f1_{h}h'
+        if key in eval_result:
+            print(f"f1_{h}h:            {eval_result[key]:.6f}")
+    print(f"n_features:       {len(feat_cols)}")
+    print(f"train_samples:    {len(X_train_full)}")
+    print(f"val_samples:      {len(X_val_full)}")
     print(f"tier:             {TIER}")
+    print(f"model:            {MODEL}")
     print(f"total_seconds:    {t_total:.1f}")
     print(f"device:           {DEVICE}")
-
-    # Discovery summary
-    print(f"\n--- Discovery ---")
-    print(f"temporal_spread:  {discovery['mean_temporal_spread']:.1f}")
-    print(f"unit_diversity:   {discovery['mean_unit_diversity']:.1f}")
-    if discovery["band_profiles"]:
-        print("band_profiles:")
-        for k, v in discovery["band_profiles"].items():
-            print(f"  {k}: LOW={v['low_db']:.1f} MID={v['mid_db']:.1f} HIGH={v['high_db']:.1f} ({v['n_segments']} segs)")
 
 
 if __name__ == "__main__":

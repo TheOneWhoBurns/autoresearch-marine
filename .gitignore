@@ -4,3 +4,7 @@ results.tsv
 __pycache__/
 *.pyc
 .DS_Store
+.venv/
+data/
+*.log
+__pycache__/
