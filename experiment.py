@@ -12,11 +12,20 @@ Usage: python3 experiment.py > run.log 2>&1
 """
 
 import os
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # suppress TF logs
 import re
 import time
 import json
 import numpy as np
 
+# Prevent TensorFlow from grabbing GPU memory — reserve GPU for PyTorch
+try:
+    import tensorflow as tf
+    tf.config.set_visible_devices([], 'GPU')  # TF uses CPU only
+except Exception:
+    pass
+
+import librosa
 from prepare import (
     TARGET_SR, SEGMENT_SECONDS, SEGMENT_SAMPLES,
     N_FFT, HOP_LENGTH, N_MELS, F_MIN, F_MAX,
@@ -49,12 +58,15 @@ USE_RMS = True
 # PANNs (Tier 2 — used for interpretation, not clustering)
 USE_PANNS_LABELS = True
 
+# NOAA humpback whale detector (Tier 2c — whale detection scores as features)
+USE_NOAA_WHALE = True  # Run 12b: re-enabled with per-file resampling optimization
+
 # Dimensionality reduction
 REDUCER = "umap"
 N_COMPONENTS = 20
 UMAP_N_NEIGHBORS = 15
 UMAP_MIN_DIST = 0.0
-UMAP_METRIC = "euclidean"
+UMAP_METRIC = "cosine"  # 12g: cosine beat euclidean for CNN features
 
 # Clustering
 CLUSTERER = "hdbscan"
@@ -357,9 +369,10 @@ def extract_birdnet_embeddings(segments):
 # Tier 3: CNN classifier with pseudo-labels from HDBSCAN
 # ---------------------------------------------------------------------------
 
-def train_cnn_classifier(segments, pseudo_labels):
+def train_cnn_classifier(all_mels_array, pseudo_labels):
     """Train a small CNN on mel spectrograms using HDBSCAN pseudo-labels.
-    Returns learned features (penultimate layer) for re-clustering."""
+    Returns learned features (penultimate layer) for re-clustering.
+    Accepts precomputed normalized mel spectrograms (N, n_mels, time_dim)."""
     import torch
     import torch.nn as nn
 
@@ -378,13 +391,7 @@ def train_cnn_classifier(segments, pseudo_labels):
     n_classes = len(set(pseudo_labels[mask]))
     print(f"  Training CNN: {len(labeled_indices)} labeled segments, {n_classes} classes")
 
-    # Build mel spectrograms for ALL segments, normalize together
-    all_mels = []
-    for seg in segments:
-        all_mels.append(compute_melspec(seg))
-    time_dim = min(m.shape[1] for m in all_mels)
-    X_all = np.array([m[:, :time_dim] for m in all_mels], dtype=np.float32)
-    X_all = (X_all - X_all.min()) / (X_all.max() - X_all.min() + 1e-8)
+    X_all = all_mels_array
     X = X_all[labeled_indices]
     y = pseudo_labels[mask]
 
@@ -419,6 +426,7 @@ def train_cnn_classifier(segments, pseudo_labels):
             logits = self.classifier(feats)
             return logits, feats
 
+    time_dim = X_all.shape[2]
     model = MarineCNN(128, time_dim, n_classes, feat_dim=64).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=5e-3)
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
@@ -428,7 +436,7 @@ def train_cnn_classifier(segments, pseudo_labels):
 
     batch_size = 32
     n = len(X_tensor)
-    n_epochs = 500
+    n_epochs = 300
 
     warmup_epochs = 20
     def lr_lambda(epoch):
@@ -495,10 +503,11 @@ def spec_augment(batch, freq_mask_param=20, time_mask_param=30):
     return augmented
 
 
-def train_contrastive(segments, temperature=0.1, feat_dim=64, n_epochs=300):
+def train_contrastive(all_mels_array, temperature=0.1, feat_dim=64, n_epochs=300):
     """Train a CNN encoder with NT-Xent contrastive loss (SimCLR).
     No labels required — learns by comparing augmented views of same segment.
-    Returns learned features for all segments."""
+    Returns learned features for all segments.
+    Accepts precomputed normalized mel spectrograms (N, n_mels, time_dim)."""
     import torch
     import torch.nn as nn
     import torch.nn.functional as F
@@ -512,13 +521,7 @@ def train_contrastive(segments, temperature=0.1, feat_dim=64, n_epochs=300):
     device = torch.device(device_str)
     print(f"  Contrastive device: {device}")
 
-    # Build mel spectrograms for ALL segments
-    all_mels = []
-    for seg in segments:
-        all_mels.append(compute_melspec(seg))
-    time_dim = min(m.shape[1] for m in all_mels)
-    X_all = np.array([m[:, :time_dim] for m in all_mels], dtype=np.float32)
-    X_all = (X_all - X_all.min()) / (X_all.max() - X_all.min() + 1e-8)
+    X_all = all_mels_array
 
     class Encoder(nn.Module):
         def __init__(self, n_mels, time_dim, feat_dim):
@@ -553,6 +556,7 @@ def train_contrastive(segments, temperature=0.1, feat_dim=64, n_epochs=300):
                 return feats, F.normalize(proj, dim=1)
             return feats
 
+    time_dim = X_all.shape[2]
     model = Encoder(128, time_dim, feat_dim).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=5e-3)
 
@@ -673,7 +677,7 @@ def cluster(features_reduced):
 # Analysis
 # ---------------------------------------------------------------------------
 
-def analyze_clusters(labels, metadata, features, segments=None, panns_labels=None):
+def analyze_clusters(labels, metadata, features, segments=None, panns_labels=None, noaa_scores=None):
     """Print cluster summary with ecological interpretation."""
     unique_labels = sorted(set(labels))
     print(f"\n{'='*60}")
@@ -767,6 +771,23 @@ def analyze_clusters(labels, metadata, features, segments=None, panns_labels=Non
                 print(f"    PANNs: {dict(cat_counts)}")
                 print(f"    PANNs top: {[l for l, c in label_counts]}")
 
+        # NOAA whale scores per cluster
+        if noaa_scores is not None:
+            cluster_noaa = noaa_scores[mask]  # (n_in_cluster, 3): mean, max, std
+            whale_mean = cluster_noaa[:, 0].mean()
+            whale_max = cluster_noaa[:, 1].max()
+            whale_high = (cluster_noaa[:, 1] >= 0.8).sum()
+            whale_med = ((cluster_noaa[:, 1] >= 0.5) & (cluster_noaa[:, 1] < 0.8)).sum()
+            whale_pct = whale_high / count * 100
+            if whale_high > 0:
+                whale_label = f"WHALE CLUSTER ({whale_pct:.0f}% high-confidence)"
+            elif whale_med > 0:
+                whale_label = f"possible whale ({whale_med} medium-confidence)"
+            else:
+                whale_label = "non-whale"
+            print(f"    NOAA whale: mean={whale_mean:.3f}, max={whale_max:.3f}, "
+                  f"high={whale_high}/{count}, -> {whale_label}")
+
 
 # ---------------------------------------------------------------------------
 # Main experiment
@@ -795,17 +816,181 @@ def main():
     }
     print(f"\nConfig: {json.dumps(config, indent=2)}")
 
-    # Load data
-    print("\n--- Loading data ---")
-    segments, metadata = build_dataset()
-    t_load = time.time() - t_start
-    print(f"Data loaded: {t_load:.1f}s")
+    # ---------------------------------------------------------------------------
+    # Feature caching: skip extraction if cache exists with correct segment count
+    # ---------------------------------------------------------------------------
+    import gc
+    cache_features_path = os.path.join(CACHE_DIR, "tier1_features.npy")
+    cache_mels_path = os.path.join(CACHE_DIR, "mels.npy")
+    cache_meta_path = os.path.join(CACHE_DIR, "metadata.json")
 
-    # Extract features (Tier 1 for clustering)
-    print("\n--- Extracting features ---")
-    t1 = time.time()
-    features = extract_features(segments)
-    print(f"Features: {features.shape}, {time.time()-t1:.1f}s")
+    recordings = find_wav_files()
+    print(f"Found {len(recordings)} recordings")
+
+    # Try loading from cache
+    cache_hit = False
+    if os.path.exists(cache_features_path) and os.path.exists(cache_mels_path) and os.path.exists(cache_meta_path):
+        print("\n--- Loading cached features ---")
+        try:
+            features = np.load(cache_features_path)
+            all_mels_array = np.load(cache_mels_path)
+            with open(cache_meta_path, "r") as f:
+                metadata = json.load(f)
+            n_segs = len(metadata)
+            print(f"Cache loaded: {n_segs} segments, features={features.shape}, mels={all_mels_array.shape}")
+            cache_hit = True
+        except Exception as e:
+            print(f"Cache load failed: {e}, re-extracting...")
+            cache_hit = False
+
+    if not cache_hit:
+        # Load data in streaming fashion to minimize peak memory
+        print("\n--- Loading data & extracting features (streaming) ---")
+        print(f"Loading {len(recordings)} recordings...")
+
+        all_features = []
+        all_mels_list = []
+        metadata = []
+
+        for rec in recordings:
+            print(f"  {rec['unit']}/{rec['filename']} ({rec['duration_s']:.0f}s @ {rec['sample_rate']}Hz)")
+            audio, sr = load_audio(rec["path"])
+            audio = highpass_filter(audio, sr)
+            file_segments = segment_audio(audio, sr)
+            del audio
+
+            for i, seg in enumerate(file_segments):
+                # Extract tier1 features
+                feat_vec = []
+                mel = compute_melspec(seg)
+                all_mels_list.append(mel)
+                mfcc = librosa.feature.mfcc(y=seg, sr=48000, n_mfcc=N_MFCC)
+                feat_vec.extend(mfcc.mean(axis=1))
+                feat_vec.extend(mfcc.std(axis=1))
+                if USE_DELTA_MFCC:
+                    d1 = librosa.feature.delta(mfcc)
+                    feat_vec.extend(d1.mean(axis=1))
+                    feat_vec.extend(d1.std(axis=1))
+                if USE_BAND_POWER:
+                    bp = compute_band_power(seg)
+                    feat_vec.extend([bp["low"], bp["mid"], bp["high"]])
+                if USE_SPECTRAL:
+                    sc = librosa.feature.spectral_centroid(y=seg, sr=48000)[0]
+                    sb = librosa.feature.spectral_bandwidth(y=seg, sr=48000)[0]
+                    sr_feat = librosa.feature.spectral_rolloff(y=seg, sr=48000)[0]
+                    sf_feat = librosa.feature.spectral_flatness(y=seg)[0]
+                    for x in [sc, sb, sr_feat, sf_feat]:
+                        feat_vec.extend([x.mean(), x.std()])
+                if USE_SPECTRAL_CONTRAST:
+                    scon = librosa.feature.spectral_contrast(y=seg, sr=48000)
+                    feat_vec.extend(scon.mean(axis=1))
+                    feat_vec.extend(scon.std(axis=1))
+                if USE_ZCR:
+                    z = librosa.feature.zero_crossing_rate(seg)[0]
+                    feat_vec.extend([z.mean(), z.std()])
+                if USE_RMS:
+                    r = librosa.feature.rms(y=seg)[0]
+                    feat_vec.extend([r.mean(), r.std()])
+                mel_stats = mel
+                feat_vec.extend([mel_stats.mean(), mel_stats.std(),
+                                mel_stats.max(), np.percentile(mel_stats, 90)])
+                all_features.append(feat_vec)
+
+                metadata.append({
+                    "file": rec["filename"], "unit": rec["unit"],
+                    "segment_idx": i, "offset_s": i * 10,
+                    "path": rec["path"],
+                })
+            del file_segments
+            gc.collect()
+
+        n_segs = len(all_features)
+        features = np.array(all_features, dtype=np.float32)
+        del all_features
+        gc.collect()
+
+        # Build mel array
+        time_dim = min(m.shape[1] for m in all_mels_list)
+        all_mels_array = np.array([m[:, :time_dim] for m in all_mels_list], dtype=np.float32)
+        all_mels_array = (all_mels_array - all_mels_array.min()) / (all_mels_array.max() - all_mels_array.min() + 1e-8)
+        del all_mels_list
+        gc.collect()
+
+        # Save cache
+        print("\n--- Saving feature cache ---")
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        np.save(cache_features_path, features)
+        np.save(cache_mels_path, all_mels_array)
+        with open(cache_meta_path, "w") as f:
+            json.dump(metadata, f)
+        print(f"Cache saved: features={features.shape}, mels={all_mels_array.shape}")
+
+    t_load = time.time() - t_start
+    print(f"Total segments: {len(metadata)}")
+    print(f"Features: {features.shape}, loaded in {t_load:.1f}s")
+    print(f"Mels: {all_mels_array.shape}")
+    n_segs = len(metadata)
+
+    segments = None  # Raw audio never kept — PANNs/temporal will be skipped
+
+    # ---------------------------------------------------------------------------
+    # NOAA humpback whale detection (per-file resampling for speed)
+    # ---------------------------------------------------------------------------
+    noaa_features = None
+    if USE_NOAA_WHALE:
+        cache_noaa_path = os.path.join(CACHE_DIR, "noaa_scores.npy")
+        if os.path.exists(cache_noaa_path):
+            print("\n--- Loading cached NOAA scores ---")
+            noaa_features = np.load(cache_noaa_path)
+            print(f"NOAA cache loaded: {noaa_features.shape}")
+        else:
+            print("\n--- NOAA Humpback Whale Detection (per-file resampling) ---")
+            t1 = time.time()
+            try:
+                import tensorflow_hub as hub
+                import tensorflow as tf
+                print("  Loading NOAA model...")
+                noaa_model = hub.load("https://tfhub.dev/google/humpback_whale/1")
+                noaa_score_fn = noaa_model.signatures["score"]
+                noaa_sr = 10000
+                all_noaa_scores = []
+                for rec in recordings:
+                    # Resample entire file ONCE to 10kHz
+                    audio, sr = load_audio(rec["path"])
+                    audio = highpass_filter(audio, sr)
+                    # Segment at native SR first (matches tier1 segmentation)
+                    file_segments = segment_audio(audio, sr)
+                    del audio
+                    for seg in file_segments:
+                        # Resample each segment to 10kHz for NOAA
+                        seg_10k = librosa.resample(seg, orig_sr=TARGET_SR, target_sr=noaa_sr)
+                        waveform = tf.constant(seg_10k.astype(np.float32).reshape(1, -1, 1))
+                        context_step = tf.constant(noaa_sr, dtype=tf.int64)
+                        result = noaa_score_fn(waveform=waveform, context_step_samples=context_step)
+                        scores = result["scores"].numpy().flatten()
+                        all_noaa_scores.append([float(scores.mean()), float(scores.max()), float(scores.std())])
+                    del file_segments
+                    gc.collect()
+                    if len(all_noaa_scores) % 500 == 0:
+                        print(f"  NOAA: {len(all_noaa_scores)}/{n_segs} segments")
+
+                noaa_features = np.array(all_noaa_scores, dtype=np.float32)
+                np.save(cache_noaa_path, noaa_features)
+                print(f"  NOAA scores: {noaa_features.shape}, "
+                      f"mean={noaa_features[:, 0].mean():.4f}, max={noaa_features[:, 1].max():.4f}, "
+                      f"{time.time()-t1:.1f}s")
+            except Exception as e:
+                print(f"  NOAA failed: {e}")
+                noaa_features = None
+            finally:
+                try:
+                    del noaa_model, noaa_score_fn
+                except Exception:
+                    pass
+                gc.collect()
+                print("  TF GPU memory freed")
+
+    features = features  # use all 113 features (MI selection didn't help in 12j)
 
     # Reduce dimensions
     print("\n--- Reducing dimensions ---")
@@ -825,10 +1010,28 @@ def main():
     # Discovery insights
     discovery = evaluate_discovery(labels, metadata, features_reduced, segments)
 
-    # Tier 3a: CNN classifier with pseudo-labels
+    # Tier 3a: CNN classifier with NOAA-enhanced pseudo-labels
+    labels_hdbscan = labels.copy()
+    cnn_labels = labels.copy()
+    if noaa_features is not None:
+        # Sweep whale thresholds quickly (just counting, no training)
+        for thr in [0.5, 0.6, 0.7, 0.8, 0.9]:
+            n = (noaa_features[:, 1] >= thr).sum()
+            print(f"  NOAA threshold={thr}: {n} whale segments ({n/len(labels)*100:.1f}%)")
+        # Use 0.7 — captures more whale segments (512 vs 345 at 0.8)
+        whale_threshold = 0.7
+        whale_mask = noaa_features[:, 1] >= whale_threshold
+        n_whale = whale_mask.sum()
+        if n_whale > 0:
+            whale_class = cnn_labels.max() + 1 if cnn_labels.max() >= 0 else 0
+            whale_clusters = set(cnn_labels[whale_mask])
+            cnn_labels[whale_mask] = whale_class
+            print(f"  Using threshold={whale_threshold}: {n_whale} segments "
+                  f"→ class {whale_class} (from {len(whale_clusters)} clusters)")
+
     print("\n--- Tier 3a: CNN Classifier ---")
     t1 = time.time()
-    cnn_features = train_cnn_classifier(segments, labels)
+    cnn_features = train_cnn_classifier(all_mels_array, cnn_labels)
     from sklearn.preprocessing import StandardScaler
     cnn_norm = StandardScaler().fit_transform(cnn_features)
 
@@ -857,89 +1060,171 @@ def main():
         features_reduced = features_reduced_t3
         eval_result = eval_t3
 
-    # Tier 2b: BirdNET embeddings
-    print("\n--- Tier 2b: BirdNET Embeddings ---")
-    t1 = time.time()
-    birdnet_features = extract_birdnet_embeddings(segments)
-    if birdnet_features is not None:
-        bn_norm = StandardScaler().fit_transform(birdnet_features)
+    # UMAP n_components sweep on CNN features
+    print("\n--- UMAP n_components sweep (CNN features) ---")
+    t1c = time.time()
+    import umap
+    for nc in [15, 25, 30]:
+        if nc == N_COMPONENTS:
+            continue  # already tested
+        reducer_nc = umap.UMAP(n_components=nc, n_neighbors=UMAP_N_NEIGHBORS,
+                               min_dist=UMAP_MIN_DIST, metric=UMAP_METRIC, random_state=42)
+        fr_nc = reducer_nc.fit_transform(cnn_norm)
+        lb_nc = cluster(fr_nc)
+        ev_nc = evaluate_clustering(lb_nc, fr_nc, method_name=f"cnn_nc{nc}")
+        print(f"  n_components={nc}: {ev_nc['composite_score']:.6f}")
+        if ev_nc['composite_score'] > eval_result['composite_score']:
+            print(f"  ** n_components={nc} IMPROVED: {ev_nc['composite_score']:.6f} **")
+            labels = lb_nc
+            features_reduced = fr_nc
+            eval_result = ev_nc
+    print(f"  Component sweep time: {time.time()-t1c:.1f}s")
 
-        # BirdNET-only
-        features_reduced_bn = reduce_dimensions(bn_norm)
-        labels_bn = cluster(features_reduced_bn)
-        eval_bn = evaluate_clustering(labels_bn, features_reduced_bn, method_name="birdnet_only")
+    # Tier 3b: Contrastive learning (skipped — consistently underperforms)
+    print("\n--- Tier 3b: Contrastive Learning (skipped, consistently <0.6) ---")
+    # No contrastive features this run
 
-        # BirdNET + Tier1
-        combined_bn_t1 = np.hstack([tier1_norm, bn_norm])
-        features_reduced_bnt1 = reduce_dimensions(combined_bn_t1)
-        labels_bnt1 = cluster(features_reduced_bnt1)
-        eval_bnt1 = evaluate_clustering(labels_bnt1, features_reduced_bnt1, method_name="birdnet_tier1")
-
-        # BirdNET + CNN
-        combined_bn_cnn = np.hstack([cnn_norm, bn_norm])
-        features_reduced_bncnn = reduce_dimensions(combined_bn_cnn)
-        labels_bncnn = cluster(features_reduced_bncnn)
-        eval_bncnn = evaluate_clustering(labels_bncnn, features_reduced_bncnn, method_name="birdnet_cnn")
-
-        print(f"  BN-only: {eval_bn['composite_score']:.6f}, "
-              f"BN+T1: {eval_bnt1['composite_score']:.6f}, "
-              f"BN+CNN: {eval_bncnn['composite_score']:.6f}")
-        print(f"  BirdNET time: {time.time()-t1:.1f}s")
-
-        # Check if any BirdNET combo beats current best
-        bn_candidates = [
-            (eval_bn, labels_bn, features_reduced_bn, "birdnet-only"),
-            (eval_bnt1, labels_bnt1, features_reduced_bnt1, "birdnet+tier1"),
-            (eval_bncnn, labels_bncnn, features_reduced_bncnn, "birdnet+cnn"),
+    # NOAA combos (if available)
+    if noaa_features is not None:
+        print("\n--- NOAA Combos ---")
+        t1 = time.time()
+        noaa_candidates = [
+            (np.hstack([tier1_norm, noaa_features]), "noaa+tier1"),
+            (np.hstack([cnn_norm, noaa_features]), "noaa+cnn"),
+            (np.hstack([tier1_norm, cnn_norm, noaa_features]), "noaa+tier1+cnn"),
         ]
-        for ev, lb, fr, name in bn_candidates:
+        for combo_feats, name in noaa_candidates:
+            fr = reduce_dimensions(combo_feats)
+            lb = cluster(fr)
+            ev = evaluate_clustering(lb, fr, method_name=name)
+            print(f"  {name}: {ev['composite_score']:.6f}")
             if ev['composite_score'] > eval_result['composite_score']:
                 print(f"  ** {name} IMPROVED: {ev['composite_score']:.6f} **")
                 labels = lb
                 features_reduced = fr
                 eval_result = ev
-    else:
-        print("  BirdNET skipped")
+        print(f"  NOAA combos time: {time.time()-t1:.1f}s")
 
-    # Tier 3b: Contrastive learning (no labels needed)
-    print("\n--- Tier 3b: Contrastive Learning (SimCLR) ---")
+    # Kitchen sink: combine all available feature types
+    print("\n--- Kitchen Sink (all features) ---")
     t1 = time.time()
-    cl_features = train_contrastive(segments, temperature=0.1, feat_dim=64, n_epochs=300)
-    cl_norm = StandardScaler().fit_transform(cl_features)
+    sink_parts = [tier1_norm, cnn_norm]
+    sink_names = ["T1", "CNN"]
+    if noaa_features is not None:
+        sink_parts.append(noaa_features)
+        sink_names.append("NOAA")
+    combined_sink = np.hstack(sink_parts)
+    features_reduced_sink = reduce_dimensions(combined_sink)
+    labels_sink = cluster(features_reduced_sink)
+    eval_sink = evaluate_clustering(labels_sink, features_reduced_sink,
+                                    method_name="kitchen_sink_" + "+".join(sink_names))
+    print(f"  {'+'.join(sink_names)}: {eval_sink['composite_score']:.6f} "
+          f"({combined_sink.shape[1]} dims)")
+    print(f"  Kitchen sink time: {time.time()-t1:.1f}s")
+    if eval_sink['composite_score'] > eval_result['composite_score']:
+        print(f"  ** Kitchen sink IMPROVED: {eval_sink['composite_score']:.6f} **")
+        labels = labels_sink
+        features_reduced = features_reduced_sink
+        eval_result = eval_sink
 
-    features_reduced_cl = reduce_dimensions(cl_norm)
-    labels_cl = cluster(features_reduced_cl)
-    eval_cl = evaluate_clustering(labels_cl, features_reduced_cl, method_name="tier3_contrastive")
+    # ---------------------------------------------------------------------------
+    # Optimization: Per-unit feature normalization
+    # Clusters split by hydrophone unit due to different sample rates (24/48/96kHz)
+    # Normalizing features per-unit removes unit-driven artifacts
+    # ---------------------------------------------------------------------------
+    print("\n--- Per-Unit Feature Normalization ---")
+    t1 = time.time()
+    units = [m["unit"] for m in metadata]
+    unique_units = sorted(set(units))
+    print(f"  Units: {unique_units}")
 
-    # Also try combined: tier1 + contrastive
-    combined_cl = np.hstack([tier1_norm, cl_norm])
-    features_reduced_clc = reduce_dimensions(combined_cl)
-    labels_clc = cluster(features_reduced_clc)
-    eval_clc = evaluate_clustering(labels_clc, features_reduced_clc, method_name="tier3_cl_combined")
+    # Normalize tier1 features per-unit
+    tier1_unit_norm = features.copy()
+    for unit in unique_units:
+        mask = np.array([u == unit for u in units])
+        if mask.sum() > 1:
+            unit_mean = tier1_unit_norm[mask].mean(axis=0)
+            unit_std = tier1_unit_norm[mask].std(axis=0) + 1e-8
+            tier1_unit_norm[mask] = (tier1_unit_norm[mask] - unit_mean) / unit_std
+    tier1_un = StandardScaler().fit_transform(tier1_unit_norm)
 
-    # Also try: CNN + contrastive
-    combined_all = np.hstack([cnn_norm, cl_norm])
-    features_reduced_all = reduce_dimensions(combined_all)
-    labels_all = cluster(features_reduced_all)
-    eval_all = evaluate_clustering(labels_all, features_reduced_all, method_name="tier3_cnn_cl")
-
-    print(f"  CL-only: {eval_cl['composite_score']:.6f}, "
-          f"CL+T1: {eval_clc['composite_score']:.6f}, "
-          f"CNN+CL: {eval_all['composite_score']:.6f}")
-    print(f"  Tier 3b time: {time.time()-t1:.1f}s")
-
-    # Pick best across all approaches
-    candidates = [
-        (eval_cl, labels_cl, features_reduced_cl, "contrastive-only"),
-        (eval_clc, labels_clc, features_reduced_clc, "contrastive+tier1"),
-        (eval_all, labels_all, features_reduced_all, "cnn+contrastive"),
+    # Try per-unit norm with best feature combos
+    un_candidates = [
+        (tier1_un, "unitnorm_T1"),
+        (np.hstack([tier1_un, cnn_norm]), "unitnorm_T1+CNN"),
     ]
-    for ev, lb, fr, name in candidates:
+    if noaa_features is not None:
+        un_candidates.append((np.hstack([tier1_un, cnn_norm, noaa_features]), "unitnorm_T1+CNN+NOAA"))
+    for combo_feats, name in un_candidates:
+        fr = reduce_dimensions(combo_feats)
+        lb = cluster(fr)
+        ev = evaluate_clustering(lb, fr, method_name=name)
+        print(f"  {name}: {ev['composite_score']:.6f}")
         if ev['composite_score'] > eval_result['composite_score']:
             print(f"  ** {name} IMPROVED: {ev['composite_score']:.6f} **")
             labels = lb
             features_reduced = fr
             eval_result = ev
+    print(f"  Per-unit norm time: {time.time()-t1:.1f}s")
+
+    # ---------------------------------------------------------------------------
+    # Optimization: HDBSCAN parameter sweep on best features so far
+    # ---------------------------------------------------------------------------
+    print("\n--- HDBSCAN Parameter Sweep ---")
+    t1 = time.time()
+    best_sweep_eval = eval_result
+    best_sweep_labels = labels
+    best_sweep_name = "current_best"
+    import hdbscan as hdbscan_lib
+    for min_cluster in [8, 10, 12, 15, 20]:
+        for min_samples in [3, 5, 7, 10]:
+            lb = hdbscan_lib.HDBSCAN(
+                min_cluster_size=min_cluster, min_samples=min_samples
+            ).fit_predict(features_reduced)
+            ev = evaluate_clustering(lb, features_reduced,
+                                     method_name=f"sweep_mc{min_cluster}_ms{min_samples}")
+            n_cl = len(set(lb[lb >= 0]))
+            noise_pct = (lb == -1).sum() / len(lb) * 100
+            if ev['composite_score'] > best_sweep_eval['composite_score']:
+                best_sweep_eval = ev
+                best_sweep_labels = lb
+                best_sweep_name = f"mc{min_cluster}_ms{min_samples}"
+                print(f"  ** mc={min_cluster} ms={min_samples}: {ev['composite_score']:.6f} "
+                      f"({n_cl} clusters, {noise_pct:.1f}% noise) **")
+    if best_sweep_name != "current_best":
+        print(f"  Sweep winner: {best_sweep_name} = {best_sweep_eval['composite_score']:.6f}")
+        labels = best_sweep_labels
+        eval_result = best_sweep_eval
+    else:
+        print(f"  No improvement from sweep (best remains {eval_result['composite_score']:.6f})")
+    print(f"  Sweep time: {time.time()-t1:.1f}s")
+
+    # ---------------------------------------------------------------------------
+    # Optimization: Noise reassignment via KNN
+    # ---------------------------------------------------------------------------
+    n_noise = (labels == -1).sum()
+    if n_noise > 0:
+        print(f"\n--- Noise Reassignment ({n_noise} noise points) ---")
+        t1 = time.time()
+        from sklearn.neighbors import KNeighborsClassifier
+        noise_mask = labels == -1
+        labeled_mask = labels >= 0
+        if labeled_mask.sum() > 0:
+            knn = KNeighborsClassifier(n_neighbors=5)
+            knn.fit(features_reduced[labeled_mask], labels[labeled_mask])
+            noise_preds = knn.predict(features_reduced[noise_mask])
+            labels_reassigned = labels.copy()
+            labels_reassigned[noise_mask] = noise_preds
+            ev_reassigned = evaluate_clustering(labels_reassigned, features_reduced,
+                                                method_name="noise_reassigned")
+            print(f"  After reassignment: {ev_reassigned['composite_score']:.6f} "
+                  f"(was {eval_result['composite_score']:.6f}), "
+                  f"coverage: {ev_reassigned['coverage']:.4f}")
+            if ev_reassigned['composite_score'] > eval_result['composite_score']:
+                print(f"  ** Noise reassignment IMPROVED! **")
+                labels = labels_reassigned
+                eval_result = ev_reassigned
+            print(f"  Reassignment time: {time.time()-t1:.1f}s")
 
     # Update discovery with potentially new labels
     discovery = evaluate_discovery(labels, metadata, features_reduced, segments)
@@ -965,17 +1250,24 @@ def main():
         if len(noise_indices) > 0:
             representative_indices.extend(noise_indices[:3].tolist())
 
-        rep_segments = [segments[i] for i in representative_indices]
-        raw_panns = get_panns_labels(rep_segments)
-        if raw_panns is not None:
-            panns_labels = {representative_indices[k]: v for k, v in raw_panns.items()}
-            print(f"  PANNs labels for {len(representative_indices)} representatives, {time.time()-t1:.1f}s")
+        if segments is not None:
+            rep_segments = [segments[i] for i in representative_indices]
+            raw_panns = get_panns_labels(rep_segments)
+            if raw_panns is not None:
+                panns_labels = {representative_indices[k]: v for k, v in raw_panns.items()}
+                print(f"  PANNs labels for {len(representative_indices)} representatives, {time.time()-t1:.1f}s")
+        else:
+            print("  PANNs skipped (raw audio freed for memory)")
 
     # Analysis with improved interpretation
-    analyze_clusters(labels, metadata, features, segments, panns_labels)
+    analyze_clusters(labels, metadata, features, segments, panns_labels, noaa_scores=noaa_features)
 
     # Temporal analysis
-    temporal = analyze_temporal(labels, metadata, segments)
+    if segments is not None:
+        temporal = analyze_temporal(labels, metadata, segments)
+    else:
+        temporal = None
+        print("  Temporal analysis skipped (raw audio freed for memory)")
 
     # Save
     os.makedirs(RESULTS_DIR, exist_ok=True)
@@ -991,6 +1283,223 @@ def main():
     with open(result_path, "w") as f:
         json.dump(result_data, f, indent=2)
 
+    # =========================================================================
+    # PHASE 2: Cross-Unit Marine Sound Classifier
+    # Use clustering + NOAA to create labeled dataset, train classifier,
+    # validate across hydrophone units, export for inference on new data.
+    # =========================================================================
+    print("\n" + "="*60)
+    print("PHASE 2: Cross-Unit Marine Sound Classifier")
+    print("="*60)
+    t_phase2 = time.time()
+
+    # Step 1: Create labeled dataset from clustering + NOAA + acoustics
+    print("\n--- Creating labeled dataset ---")
+    import torch
+    import torch.nn as nn
+    from sklearn.metrics import classification_report, f1_score
+
+    # Compute per-segment band power for ecological classification
+    # features columns: MFCC(40) + delta(40) + band(3) + spectral(8) + contrast(14) + zcr(2) + rms(2) + mel(4) = 113
+    # band power is at indices 40+40 = 80,81,82 (low, mid, high)
+    band_low_idx, band_mid_idx, band_high_idx = 80, 81, 82
+    rms_mean_idx = 108  # rms mean is near the end
+
+    eco_labels = []
+    units = [m["unit"] for m in metadata]
+    for i in range(n_segs):
+        noaa_max = noaa_features[i, 1] if noaa_features is not None else 0
+        noaa_mean = noaa_features[i, 0] if noaa_features is not None else 0
+        low_db = features[i, band_low_idx]
+        mid_db = features[i, band_mid_idx]
+        high_db = features[i, band_high_idx]
+        rms_val = features[i, rms_mean_idx]
+        mid_low = mid_db - low_db
+
+        # Whale detection (NOAA-based)
+        if noaa_max >= 0.7:
+            if noaa_mean >= 0.5:
+                eco_labels.append("whale_strong")  # sustained whale vocalization
+            else:
+                eco_labels.append("whale_brief")   # brief whale call in segment
+        elif noaa_max >= 0.4:
+            eco_labels.append("possible_whale")
+        # Anthropogenic (low-freq dominated, loud)
+        elif mid_low < -15 and rms_val > 0.005:
+            eco_labels.append("vessel_noise")
+        # Biological (mid-freq activity)
+        elif mid_db > -85 and mid_low > -5:
+            eco_labels.append("biophony")  # reef, fish, shrimp
+        # Quiet ambient
+        elif rms_val < 0.001:
+            eco_labels.append("silence")
+        # General ambient
+        else:
+            eco_labels.append("ambient")
+
+    eco_labels = np.array(eco_labels)
+    from collections import Counter
+    label_counts = Counter(eco_labels)
+    print(f"  Label distribution: {dict(label_counts)}")
+
+    # Create numeric labels
+    label_names = sorted(set(eco_labels))
+    label_to_idx = {name: idx for idx, name in enumerate(label_names)}
+    y_all = np.array([label_to_idx[l] for l in eco_labels])
+    n_eco_classes = len(label_names)
+    print(f"  Classes: {label_names} ({n_eco_classes} classes)")
+
+    # Step 2: Leave-one-unit-out cross-validation
+    print("\n--- Leave-One-Unit-Out Cross-Validation ---")
+    unique_units = sorted(set(units))
+    unit_arr = np.array(units)
+
+    all_fold_accs = []
+    all_fold_f1s = []
+
+    for held_out_unit in unique_units:
+        test_mask = unit_arr == held_out_unit
+        train_mask = ~test_mask
+
+        if test_mask.sum() == 0 or train_mask.sum() == 0:
+            continue
+
+        X_train = all_mels_array[train_mask]
+        y_train = y_all[train_mask]
+        X_test = all_mels_array[test_mask]
+        y_test = y_all[test_mask]
+
+        # Check if test set has all unknown — skip
+        if len(set(y_test)) < 2 and label_names[y_test[0]] == "unknown":
+            print(f"  Unit {held_out_unit}: skipped (all unknown)")
+            continue
+
+        # Train CNN classifier
+        time_dim = X_train.shape[2]
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        class EcoClassifier(nn.Module):
+            def __init__(self, n_mels, time_dim, n_classes):
+                super().__init__()
+                self.conv = nn.Sequential(
+                    nn.Conv2d(1, 32, 3, padding=1), nn.ReLU(), nn.MaxPool2d(4),
+                    nn.Conv2d(32, 64, 3, padding=1), nn.ReLU(), nn.MaxPool2d(4),
+                    nn.Conv2d(64, 128, 3, padding=1), nn.ReLU(), nn.AdaptiveAvgPool2d((1, 1)),
+                )
+                self.fc = nn.Sequential(
+                    nn.Linear(128, 64), nn.ReLU(), nn.Dropout(0.3),
+                    nn.Linear(64, n_classes),
+                )
+
+            def forward(self, x):
+                x = x.unsqueeze(1)  # (B, 1, n_mels, time)
+                h = self.conv(x)
+                h = h.view(h.size(0), -1)
+                return self.fc(h)
+
+        model = EcoClassifier(128, time_dim, n_eco_classes).to(device)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
+        # Class-weighted loss for imbalanced classes
+        class_counts = np.bincount(y_train, minlength=n_eco_classes).astype(np.float32)
+        class_weights = 1.0 / (class_counts + 1)
+        class_weights = class_weights / class_weights.sum() * n_eco_classes
+        criterion = nn.CrossEntropyLoss(weight=torch.tensor(class_weights).to(device))
+
+        # Train with cosine annealing
+        n_train_epochs = 150
+        X_t = torch.tensor(X_train, dtype=torch.float32)
+        y_t = torch.tensor(y_train, dtype=torch.long)
+        dataset = torch.utils.data.TensorDataset(X_t, y_t)
+        loader = torch.utils.data.DataLoader(dataset, batch_size=64, shuffle=True)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=n_train_epochs)
+
+        model.train()
+        for epoch in range(n_train_epochs):
+            for xb, yb in loader:
+                xb, yb = xb.to(device), yb.to(device)
+                optimizer.zero_grad()
+                loss = criterion(model(xb), yb)
+                loss.backward()
+                optimizer.step()
+            scheduler.step()
+
+        # Evaluate on held-out unit
+        model.eval()
+        X_te = torch.tensor(X_test, dtype=torch.float32)
+        with torch.no_grad():
+            preds = []
+            for i in range(0, len(X_te), 64):
+                batch = X_te[i:i+64].to(device)
+                pred = model(batch).argmax(dim=1).cpu().numpy()
+                preds.extend(pred)
+        preds = np.array(preds)
+
+        acc = (preds == y_test).mean()
+        f1 = f1_score(y_test, preds, average="weighted", zero_division=0)
+        all_fold_accs.append(acc)
+        all_fold_f1s.append(f1)
+        print(f"  Unit {held_out_unit}: acc={acc:.4f}, f1={f1:.4f} "
+              f"(train={train_mask.sum()}, test={test_mask.sum()})")
+
+        # Per-class report for this fold
+        report = classification_report(y_test, preds, target_names=label_names,
+                                        zero_division=0, output_dict=True)
+        for cls_name in label_names:
+            if cls_name in report:
+                r = report[cls_name]
+                print(f"    {cls_name}: prec={r['precision']:.3f} rec={r['recall']:.3f} "
+                      f"f1={r['f1-score']:.3f} n={r['support']}")
+
+    if all_fold_accs:
+        mean_acc = np.mean(all_fold_accs)
+        mean_f1 = np.mean(all_fold_f1s)
+        print(f"\n  Cross-unit mean: acc={mean_acc:.4f}, f1={mean_f1:.4f}")
+
+    # Step 3: Train final model on all data and export
+    print("\n--- Training final model (all units) ---")
+    final_model = EcoClassifier(128, all_mels_array.shape[2], n_eco_classes).to(device)
+    final_optimizer = torch.optim.Adam(final_model.parameters(), lr=1e-3, weight_decay=1e-4)
+    # Class-weighted loss
+    all_class_counts = np.bincount(y_all, minlength=n_eco_classes).astype(np.float32)
+    all_class_weights = 1.0 / (all_class_counts + 1)
+    all_class_weights = all_class_weights / all_class_weights.sum() * n_eco_classes
+    final_criterion = nn.CrossEntropyLoss(weight=torch.tensor(all_class_weights).to(device))
+
+    X_all_t = torch.tensor(all_mels_array, dtype=torch.float32)
+    y_all_t = torch.tensor(y_all, dtype=torch.long)
+    all_dataset = torch.utils.data.TensorDataset(X_all_t, y_all_t)
+    all_loader = torch.utils.data.DataLoader(all_dataset, batch_size=64, shuffle=True)
+    final_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(final_optimizer, T_max=200)
+
+    final_model.train()
+    for epoch in range(200):
+        total_loss = 0
+        for xb, yb in all_loader:
+            xb, yb = xb.to(device), yb.to(device)
+            final_optimizer.zero_grad()
+            loss = final_criterion(final_model(xb), yb)
+            loss.backward()
+            final_optimizer.step()
+            total_loss += loss.item()
+        final_scheduler.step()
+        if (epoch + 1) % 50 == 0:
+            print(f"  Epoch {epoch+1}/200: loss={total_loss:.4f}")
+
+    # Export model
+    model_path = os.path.join(RESULTS_DIR, "marine_classifier.pt")
+    torch.save({
+        "model_state_dict": final_model.state_dict(),
+        "label_names": label_names,
+        "label_to_idx": label_to_idx,
+        "n_mels": 128,
+        "time_dim": all_mels_array.shape[2],
+        "n_classes": n_eco_classes,
+        "cross_unit_acc": mean_acc if all_fold_accs else None,
+        "cross_unit_f1": mean_f1 if all_fold_f1s else None,
+    }, model_path)
+    print(f"  Model exported: {model_path}")
+    print(f"  Phase 2 time: {time.time()-t_phase2:.1f}s")
+
     # Final summary
     t_total = time.time() - t_start
     print("\n---")
@@ -1001,7 +1510,7 @@ def main():
     print(f"n_noise:          {eval_result['n_noise']}")
     print(f"coverage:         {eval_result['coverage']:.4f}")
     print(f"n_features:       {features.shape[1]}")
-    print(f"total_segments:   {len(segments)}")
+    print(f"total_segments:   {n_segs}")
     print(f"tier:             {TIER}")
     print(f"total_seconds:    {t_total:.1f}")
     print(f"device:           {DEVICE}")
