@@ -1,0 +1,723 @@
+================================================================================
+MARINE SOUND CATALOG — Galápagos Hydrophone Recordings
+================================================================================
+
+──────────────────────────────────────────────────────────────────────
+FILE: 5783.040122170635.wav
+  Unit: 5783  |  Recorded: 2004-01-22 17:06:35
+  Segments: 121
+
+          Time  Acoustic Label             PANNs Category   PANNs Top Sound              NDSI
+  ────────────  ─────────────────────────  ───────────────  ─────────────────────────  ──────
+   00:00-00:10  vessel noise               anthropogenic    Speech                     -0.992
+   00:10-00:20  mixed soundscape           unknown          Speech                     -0.995
+   00:20-00:30  near-silence               unknown          Speech                     -0.992
+   00:30-00:40  mixed soundscape           unknown          Inside, small room         -0.996
+   00:40-00:50  mixed soundscape           anthropogenic    Speech                     -0.999
+   00:50-01:00  vessel noise               unknown          Speech                     -1.000
+   01:00-01:10  moderate biological        biological       Stomach rumble             -0.990
+   01:10-01:20  vessel noise               unknown          Stomach rumble             -0.994
+   01:20-01:30  vessel noise               biological       Speech                     -1.000
+   01:30-01:40  vessel noise               unknown          Stomach rumble             -0.999
+   01:40-01:50  vessel noise               biological       Stomach rumble             -0.999
+   01:50-02:00  near-silence               biological       Speech                     -0.925
+   02:00-02:10  mixed soundscape           unknown          Stomach rumble             -1.000
+   02:10-02:20  near-silence               ambient          Silence                    -0.252
+   02:20-02:30  near-silence               ambient          Silence                    -0.313
+   02:30-02:40  near-silence               ambient          Silence                    -0.311
+   02:40-02:50  mixed soundscape           unknown          Speech                     -1.000
+   02:50-03:00  mixed soundscape           ambient          Silence                    -0.996
+   03:00-03:10  mixed soundscape           biological       Speech                     -0.999
+   03:10-03:20  mixed soundscape           biological       Speech                     -0.997
+   03:20-03:30  near-silence               ambient          Silence                    -0.182
+   03:30-03:40  near-silence               ambient          Silence                    -0.181
+   03:40-03:50  near-silence               ambient          Silence                    -0.188
+   03:50-04:00  near-silence               ambient          Silence                    -0.165
+   04:00-04:10  near-silence               ambient          Silence                    -0.182
+   04:10-04:20  near-silence               ambient          Silence                    -0.207
+   04:20-04:30  near-silence               ambient          Silence                    -0.170
+   04:30-04:40  near-silence               ambient          Silence                    -0.213
+   04:40-04:50  near-silence               ambient          Silence                    -0.163
+   04:50-05:00  near-silence               ambient          Silence                    -0.181
+   05:00-05:10  near-silence               ambient          Silence                    -0.174
+   05:10-05:20  near-silence               ambient          Silence                    -0.160
+   05:20-05:30  near-silence               ambient          Silence                    -0.164
+   05:30-05:40  near-silence               ambient          Silence                    -0.174
+   05:40-05:50  near-silence               ambient          Silence                    -0.203
+   05:50-06:00  near-silence               ambient          Silence                    -0.189
+   06:00-06:10  near-silence               ambient          Silence                    -0.167
+   06:10-06:20  near-silence               ambient          Silence                    -0.361
+   06:20-06:30  near-silence               ambient          Silence                    -0.196
+   06:30-06:40  near-silence               ambient          Silence                    -0.204
+   06:40-06:50  near-silence               ambient          Silence                    -0.187
+   06:50-07:00  near-silence               ambient          Silence                    -0.205
+   07:00-07:10  near-silence               ambient          Silence                    -0.220
+   07:10-07:20  near-silence               ambient          Silence                    -0.246
+   07:20-07:30  near-silence               ambient          Silence                    -0.198
+   07:30-07:40  near-silence               ambient          Silence                    -0.224
+   07:40-07:50  near-silence               ambient          Silence                    -0.240
+   07:50-08:00  near-silence               ambient          Silence                    -0.254
+   08:00-08:10  near-silence               ambient          Silence                    -0.235
+   08:10-08:20  near-silence               unknown          Sigh                       -0.315
+   08:20-08:30  near-silence               ambient          Silence                    -0.237
+   08:30-08:40  near-silence               ambient          Silence                    -0.295
+   08:40-08:50  near-silence               ambient          Silence                    -0.292
+   08:50-09:00  near-silence               ambient          Silence                    -0.252
+   09:00-09:10  near-silence               ambient          Silence                    -0.267
+   09:10-09:20  near-silence               ambient          Silence                    -0.346
+   09:20-09:30  near-silence               ambient          Silence                    -0.490
+   09:30-09:40  near-silence               ambient          Silence                    -0.296
+   09:40-09:50  near-silence               ambient          Silence                    -0.305
+   09:50-10:00  near-silence               ambient          Silence                    -0.277
+   10:00-10:10  near-silence               ambient          Silence                    -0.279
+   10:10-10:20  near-silence               ambient          Silence                    -0.239
+   10:20-10:30  near-silence               ambient          Silence                    -0.260
+   10:30-10:40  near-silence               ambient          Silence                    -0.267
+   10:40-10:50  near-silence               ambient          Silence                    -0.276
+   10:50-11:00  near-silence               ambient          Silence                    -0.454
+   11:00-11:10  near-silence               ambient          Silence                    -0.320
+   11:10-11:20  near-silence               ambient          Speech                     -0.314
+   11:20-11:30  near-silence               ambient          Silence                    -0.350
+   11:30-11:40  near-silence               ambient          Silence                    -0.335
+   11:40-11:50  near-silence               ambient          Speech                     -0.344
+   11:50-12:00  near-silence               ambient          Silence                    -0.322
+   12:00-12:10  near-silence               ambient          Silence                    -0.301
+   12:10-12:20  near-silence               ambient          Silence                    -0.261
+   12:20-12:30  near-silence               ambient          Silence                    -0.255
+   12:30-12:40  near-silence               ambient          Silence                    -0.271
+   12:40-12:50  near-silence               ambient          Silence                    -0.226
+   12:50-13:00  near-silence               ambient          Silence                    -0.168
+   13:00-13:10  near-silence               ambient          Silence                    -0.241
+   13:10-13:20  near-silence               ambient          Silence                    -0.573
+   13:20-13:30  near-silence               ambient          Silence                    -0.321
+   13:30-13:40  near-silence               ambient          Silence                    -0.264
+   13:40-13:50  near-silence               ambient          Silence                    -0.241
+   13:50-14:00  near-silence               ambient          Silence                    -0.223
+   14:00-14:10  near-silence               ambient          Silence                    -0.269
+   14:10-14:20  near-silence               ambient          Silence                    -0.292
+   14:20-14:30  near-silence               ambient          Silence                    -0.254
+   14:30-14:40  near-silence               ambient          Silence                    -0.246
+   14:40-14:50  near-silence               ambient          Silence                    -0.274
+   14:50-15:00  near-silence               ambient          Silence                    -0.284
+   15:00-15:10  near-silence               ambient          Silence                    -0.280
+   15:10-15:20  near-silence               ambient          Silence                    -0.293
+   15:20-15:30  near-silence               ambient          Silence                    -0.271
+   15:30-15:40  near-silence               ambient          Silence                    -0.310
+   15:40-15:50  near-silence               ambient          Silence                    -0.324
+   15:50-16:00  near-silence               ambient          Silence                    -0.298
+   16:00-16:10  near-silence               ambient          Silence                    -0.276
+   16:10-16:20  near-silence               ambient          Silence                    -0.232
+   16:20-16:30  near-silence               ambient          Silence                    -0.218
+   16:30-16:40  near-silence               ambient          Silence                    -0.288
+   16:40-16:50  near-silence               ambient          Silence                    -0.217
+   16:50-17:00  near-silence               ambient          Silence                    -0.204
+   17:00-17:10  near-silence               ambient          Silence                    -0.222
+   17:10-17:20  near-silence               ambient          Silence                    -0.237
+   17:20-17:30  near-silence               ambient          Silence                    -0.258
+   17:30-17:40  near-silence               ambient          Silence                    -0.219
+   17:40-17:50  near-silence               ambient          Silence                    -0.206
+   17:50-18:00  near-silence               ambient          Silence                    -0.135
+   18:00-18:10  near-silence               ambient          Silence                    -0.175
+   18:10-18:20  near-silence               ambient          Silence                    -0.225
+   18:20-18:30  near-silence               ambient          Silence                    -0.268
+   18:30-18:40  near-silence               ambient          Silence                    -0.228
+   18:40-18:50  near-silence               ambient          Silence                    -0.258
+   18:50-19:00  near-silence               ambient          Silence                    -0.252
+   19:00-19:10  near-silence               ambient          Silence                    -0.293
+   19:10-19:20  near-silence               ambient          Silence                    -0.329
+   19:20-19:30  near-silence               ambient          Silence                    -0.347
+   19:30-19:40  near-silence               ambient          Silence                    -0.382
+   19:40-19:50  near-silence               ambient          Silence                    -0.379
+   19:50-20:00  near-silence               ambient          Silence                    -0.340
+   20:00-20:10  near-silence               ambient          Silence                    -0.003
+
+──────────────────────────────────────────────────────────────────────
+FILE: 5783.040123030635.wav
+  Unit: 5783  |  Recorded: 2004-01-23 03:06:35
+  Segments: 121
+
+          Time  Acoustic Label             PANNs Category   PANNs Top Sound              NDSI
+  ────────────  ─────────────────────────  ───────────────  ─────────────────────────  ──────
+   00:00-00:10  vessel noise               unknown          Music                      -0.986
+   00:10-00:20  near-silence               ambient          Silence                    -0.060
+   00:20-00:30  near-silence               ambient          Silence                    -0.049
+   00:30-00:40  near-silence               ambient          Silence                    -0.051
+   00:40-00:50  near-silence               ambient          Silence                    -0.061
+   00:50-01:00  near-silence               ambient          Silence                    -0.057
+   01:00-01:10  near-silence               ambient          Silence                    -0.063
+   01:10-01:20  near-silence               ambient          Silence                    -0.066
+   01:20-01:30  near-silence               ambient          Silence                    -0.051
+   01:30-01:40  near-silence               ambient          Silence                    -0.054
+   01:40-01:50  near-silence               ambient          Silence                    -0.069
+   01:50-02:00  near-silence               ambient          Silence                    -0.112
+   02:00-02:10  near-silence               ambient          Silence                    -0.153
+   02:10-02:20  near-silence               ambient          Silence                    -0.143
+   02:20-02:30  near-silence               ambient          Silence                    -0.164
+   02:30-02:40  near-silence               ambient          Silence                    -0.143
+   02:40-02:50  near-silence               ambient          Silence                    -0.156
+   02:50-03:00  near-silence               ambient          Silence                    -0.155
+   03:00-03:10  near-silence               ambient          Silence                    -0.149
+   03:10-03:20  near-silence               ambient          Silence                    -0.164
+   03:20-03:30  near-silence               ambient          Silence                    -0.181
+   03:30-03:40  near-silence               ambient          Silence                    -0.188
+   03:40-03:50  near-silence               ambient          Silence                    -0.228
+   03:50-04:00  near-silence               ambient          Silence                    -0.182
+   04:00-04:10  near-silence               ambient          Silence                    -0.191
+   04:10-04:20  near-silence               ambient          Silence                    -0.177
+   04:20-04:30  near-silence               ambient          Silence                    -0.149
+   04:30-04:40  near-silence               ambient          Silence                    -0.139
+   04:40-04:50  near-silence               ambient          Silence                    -0.130
+   04:50-05:00  near-silence               ambient          Silence                    -0.115
+   05:00-05:10  near-silence               ambient          Silence                    -0.137
+   05:10-05:20  near-silence               ambient          Silence                    -0.147
+   05:20-05:30  near-silence               ambient          Silence                    -0.115
+   05:30-05:40  near-silence               ambient          Silence                    -0.144
+   05:40-05:50  near-silence               ambient          Silence                    -0.143
+   05:50-06:00  near-silence               ambient          Silence                    -0.124
+   06:00-06:10  near-silence               ambient          Silence                    -0.120
+   06:10-06:20  near-silence               ambient          Silence                    -0.136
+   06:20-06:30  near-silence               ambient          Silence                    -0.149
+   06:30-06:40  near-silence               ambient          Silence                    -0.129
+   06:40-06:50  near-silence               ambient          Silence                    -0.142
+   06:50-07:00  near-silence               ambient          Silence                    -0.126
+   07:00-07:10  near-silence               ambient          Silence                    -0.118
+   07:10-07:20  near-silence               ambient          Silence                    -0.118
+   07:20-07:30  near-silence               ambient          Silence                    -0.135
+   07:30-07:40  near-silence               ambient          Silence                    -0.124
+   07:40-07:50  near-silence               ambient          Silence                    -0.135
+   07:50-08:00  near-silence               ambient          Silence                    -0.173
+   08:00-08:10  near-silence               ambient          Silence                    -0.139
+   08:10-08:20  near-silence               ambient          Silence                    -0.176
+   08:20-08:30  near-silence               ambient          Silence                    -0.151
+   08:30-08:40  near-silence               ambient          Silence                    -0.141
+   08:40-08:50  near-silence               ambient          Silence                    -0.153
+   08:50-09:00  near-silence               ambient          Silence                    -0.159
+   09:00-09:10  near-silence               ambient          Silence                    -0.157
+   09:10-09:20  near-silence               ambient          Silence                    -0.142
+   09:20-09:30  near-silence               ambient          Silence                    -0.148
+   09:30-09:40  near-silence               ambient          Silence                    -0.155
+   09:40-09:50  near-silence               ambient          Silence                    -0.109
+   09:50-10:00  near-silence               ambient          Silence                    -0.144
+   10:00-10:10  near-silence               ambient          Silence                    -0.082
+   10:10-10:20  near-silence               ambient          Silence                    -0.045
+   10:20-10:30  near-silence               ambient          Silence                    -0.051
+   10:30-10:40  near-silence               ambient          Silence                    -0.055
+   10:40-10:50  near-silence               ambient          Silence                    -0.053
+   10:50-11:00  near-silence               ambient          Silence                    -0.055
+   11:00-11:10  near-silence               ambient          Silence                    -0.051
+   11:10-11:20  near-silence               ambient          Silence                    -0.052
+   11:20-11:30  near-silence               ambient          Silence                    -0.052
+   11:30-11:40  near-silence               ambient          Silence                    -0.048
+   11:40-11:50  near-silence               ambient          Silence                    -0.047
+   11:50-12:00  near-silence               ambient          Silence                    -0.052
+   12:00-12:10  near-silence               ambient          Silence                    -0.048
+   12:10-12:20  near-silence               ambient          Silence                    -0.052
+   12:20-12:30  near-silence               ambient          Silence                    -0.054
+   12:30-12:40  near-silence               ambient          Silence                    -0.054
+   12:40-12:50  near-silence               ambient          Silence                    -0.049
+   12:50-13:00  near-silence               ambient          Silence                    -0.049
+   13:00-13:10  near-silence               ambient          Silence                    -0.052
+   13:10-13:20  near-silence               ambient          Silence                    -0.058
+   13:20-13:30  near-silence               ambient          Silence                    -0.048
+   13:30-13:40  near-silence               ambient          Silence                    -0.053
+   13:40-13:50  near-silence               ambient          Silence                    -0.054
+   13:50-14:00  near-silence               ambient          Silence                    -0.047
+   14:00-14:10  near-silence               ambient          Silence                    -0.380
+   14:10-14:20  near-silence               ambient          Silence                    -0.303
+   14:20-14:30  near-silence               ambient          Silence                    -0.293
+   14:30-14:40  near-silence               ambient          Silence                    -0.297
+   14:40-14:50  near-silence               ambient          Silence                    -0.288
+   14:50-15:00  near-silence               ambient          Silence                    -0.305
+   15:00-15:10  near-silence               ambient          Silence                    -0.280
+   15:10-15:20  near-silence               ambient          Silence                    -0.301
+   15:20-15:30  near-silence               ambient          Silence                    -0.286
+   15:30-15:40  near-silence               ambient          Silence                    -0.264
+   15:40-15:50  near-silence               ambient          Silence                    -0.273
+   15:50-16:00  near-silence               ambient          Silence                    -0.284
+   16:00-16:10  near-silence               ambient          Silence                    -0.240
+   16:10-16:20  near-silence               ambient          Silence                    -0.269
+   16:20-16:30  near-silence               ambient          Silence                    -0.268
+   16:30-16:40  near-silence               ambient          Silence                    -0.268
+   16:40-16:50  near-silence               ambient          Silence                    -0.287
+   16:50-17:00  near-silence               ambient          Silence                    -0.292
+   17:00-17:10  near-silence               ambient          Silence                    -0.301
+   17:10-17:20  near-silence               ambient          Silence                    -0.320
+   17:20-17:30  near-silence               ambient          Silence                    -0.341
+   17:30-17:40  near-silence               ambient          Silence                    -0.345
+   17:40-17:50  near-silence               ambient          Silence                    -0.354
+   17:50-18:00  near-silence               ambient          Silence                    -0.356
+   18:00-18:10  near-silence               ambient          Silence                    -0.360
+   18:10-18:20  near-silence               ambient          Silence                    -0.355
+   18:20-18:30  near-silence               ambient          Silence                    -0.375
+   18:30-18:40  near-silence               ambient          Silence                    -0.360
+   18:40-18:50  near-silence               ambient          Silence                    -0.340
+   18:50-19:00  near-silence               ambient          Silence                    -0.377
+   19:00-19:10  near-silence               ambient          Silence                    -0.364
+   19:10-19:20  near-silence               ambient          Silence                    -0.379
+   19:20-19:30  near-silence               ambient          Silence                    -0.392
+   19:30-19:40  near-silence               ambient          Silence                    -0.375
+   19:40-19:50  near-silence               ambient          Silence                    -0.361
+   19:50-20:00  near-silence               ambient          Silence                    -0.251
+   20:00-20:10  near-silence               ambient          Silence                    -0.000
+
+──────────────────────────────────────────────────────────────────────
+FILE: 6478.230723191251.wav
+  Unit: 6478  |  Recorded: 2023-07-23 19:12:51
+  Segments: 60
+
+          Time  Acoustic Label             PANNs Category   PANNs Top Sound              NDSI
+  ────────────  ─────────────────────────  ───────────────  ─────────────────────────  ──────
+   00:00-00:10  vessel noise               unknown          Music                      -0.989
+   00:10-00:20  near-silence               ambient          Silence                    -0.886
+   00:20-00:30  near-silence               ambient          Silence                    -0.854
+   00:30-00:40  near-silence               ambient          Silence                    -0.837
+   00:40-00:50  near-silence               ambient          Silence                    -0.841
+   00:50-01:00  near-silence               ambient          Silence                    -0.812
+   01:00-01:10  near-silence               biological       Silence                    -0.868
+   01:10-01:20  near-silence               ambient          Silence                    -0.819
+   01:20-01:30  near-silence               ambient          Silence                    -0.868
+   01:30-01:40  near-silence               biological       Silence                    -0.863
+   01:40-01:50  near-silence               ambient          Silence                    -0.857
+   01:50-02:00  near-silence               ambient          Silence                    -0.835
+   02:00-02:10  near-silence               ambient          Silence                    -0.825
+   02:10-02:20  near-silence               ambient          Silence                    -0.852
+   02:20-02:30  near-silence               ambient          Silence                    -0.823
+   02:30-02:40  near-silence               ambient          Silence                    -0.914
+   02:40-02:50  near-silence               biological       Silence                    -0.921
+   02:50-03:00  near-silence               ambient          Silence                    -0.861
+   03:00-03:10  near-silence               biological       Silence                    -0.865
+   03:10-03:20  near-silence               biological       Silence                    -0.851
+   03:20-03:30  near-silence               biological       Silence                    -0.858
+   03:30-03:40  near-silence               biological       Silence                    -0.857
+   03:40-03:50  near-silence               ambient          Silence                    -0.772
+   03:50-04:00  near-silence               ambient          Silence                    -0.853
+   04:00-04:10  near-silence               ambient          Silence                    -0.901
+   04:10-04:20  near-silence               biological       Silence                    -0.861
+   04:20-04:30  near-silence               ambient          Silence                    -0.824
+   04:30-04:40  near-silence               ambient          Silence                    -0.856
+   04:40-04:50  near-silence               ambient          Silence                    -0.838
+   04:50-05:00  near-silence               ambient          Silence                    -0.867
+   05:00-05:10  near-silence               ambient          Silence                    -0.832
+   05:10-05:20  near-silence               ambient          Silence                    -0.889
+   05:20-05:30  near-silence               ambient          Silence                    -0.796
+   05:30-05:40  near-silence               ambient          Silence                    -0.846
+   05:40-05:50  near-silence               ambient          Silence                    -0.838
+   05:50-06:00  near-silence               ambient          Silence                    -0.847
+   06:00-06:10  near-silence               ambient          Silence                    -0.848
+   06:10-06:20  near-silence               ambient          Silence                    -0.872
+   06:20-06:30  near-silence               ambient          Silence                    -0.849
+   06:30-06:40  near-silence               ambient          Silence                    -0.866
+   06:40-06:50  near-silence               ambient          Silence                    -0.847
+   06:50-07:00  near-silence               ambient          Silence                    -0.847
+   07:00-07:10  near-silence               ambient          Silence                    -0.865
+   07:10-07:20  near-silence               ambient          Silence                    -0.878
+   07:20-07:30  near-silence               ambient          Silence                    -0.877
+   07:30-07:40  near-silence               biological       Silence                    -0.894
+   07:40-07:50  near-silence               ambient          Silence                    -0.854
+   07:50-08:00  near-silence               ambient          Silence                    -0.858
+   08:00-08:10  near-silence               ambient          Silence                    -0.867
+   08:10-08:20  near-silence               ambient          Silence                    -0.835
+   08:20-08:30  near-silence               ambient          Silence                    -0.847
+   08:30-08:40  near-silence               ambient          Silence                    -0.823
+   08:40-08:50  near-silence               ambient          Silence                    -0.852
+   08:50-09:00  near-silence               ambient          Silence                    -0.854
+   09:00-09:10  near-silence               ambient          Silence                    -0.822
+   09:10-09:20  near-silence               ambient          Silence                    -0.900
+   09:20-09:30  near-silence               ambient          Silence                    -0.845
+   09:30-09:40  near-silence               ambient          Silence                    -0.818
+   09:40-09:50  near-silence               ambient          Silence                    -0.816
+   09:50-10:00  near-silence               ambient          Silence                    -0.826
+
+──────────────────────────────────────────────────────────────────────
+FILE: 6478.230724044251.wav
+  Unit: 6478  |  Recorded: 2023-07-24 04:42:51
+  Segments: 60
+
+          Time  Acoustic Label             PANNs Category   PANNs Top Sound              NDSI
+  ────────────  ─────────────────────────  ───────────────  ─────────────────────────  ──────
+   00:00-00:10  vessel noise               unknown          Music                      -0.989
+   00:10-00:20  near-silence               ambient          Silence                    -0.032
+   00:20-00:30  near-silence               ambient          Silence                    -0.033
+   00:30-00:40  near-silence               ambient          Silence                    -0.034
+   00:40-00:50  near-silence               ambient          Silence                    -0.032
+   00:50-01:00  near-silence               ambient          Silence                    -0.033
+   01:00-01:10  near-silence               ambient          Silence                    -0.034
+   01:10-01:20  near-silence               ambient          Silence                    -0.035
+   01:20-01:30  near-silence               ambient          Silence                    -0.035
+   01:30-01:40  near-silence               ambient          Silence                    -0.034
+   01:40-01:50  near-silence               ambient          Silence                    -0.035
+   01:50-02:00  near-silence               ambient          Silence                    -0.036
+   02:00-02:10  near-silence               ambient          Silence                    -0.035
+   02:10-02:20  near-silence               ambient          Silence                    -0.033
+   02:20-02:30  near-silence               ambient          Silence                    -0.035
+   02:30-02:40  near-silence               ambient          Silence                    -0.035
+   02:40-02:50  near-silence               ambient          Silence                    -0.036
+   02:50-03:00  near-silence               ambient          Silence                    -0.035
+   03:00-03:10  near-silence               ambient          Silence                    -0.034
+   03:10-03:20  near-silence               ambient          Silence                    -0.035
+   03:20-03:30  near-silence               ambient          Silence                    -0.034
+   03:30-03:40  near-silence               ambient          Silence                    -0.034
+   03:40-03:50  near-silence               ambient          Silence                    -0.033
+   03:50-04:00  near-silence               ambient          Silence                    -0.035
+   04:00-04:10  near-silence               ambient          Silence                    -0.034
+   04:10-04:20  near-silence               ambient          Silence                    -0.034
+   04:20-04:30  near-silence               ambient          Silence                    -0.035
+   04:30-04:40  near-silence               ambient          Silence                    -0.033
+   04:40-04:50  near-silence               ambient          Silence                    -0.034
+   04:50-05:00  near-silence               ambient          Silence                    -0.034
+   05:00-05:10  near-silence               ambient          Silence                    -0.033
+   05:10-05:20  near-silence               ambient          Silence                    -0.051
+   05:20-05:30  near-silence               ambient          Silence                    -0.041
+   05:30-05:40  near-silence               ambient          Silence                    -0.035
+   05:40-05:50  near-silence               ambient          Silence                    -0.034
+   05:50-06:00  near-silence               ambient          Silence                    -0.034
+   06:00-06:10  near-silence               ambient          Silence                    -0.033
+   06:10-06:20  near-silence               ambient          Silence                    -0.033
+   06:20-06:30  near-silence               ambient          Silence                    -0.034
+   06:30-06:40  near-silence               ambient          Silence                    -0.033
+   06:40-06:50  near-silence               ambient          Silence                    -0.033
+   06:50-07:00  near-silence               ambient          Silence                    -0.035
+   07:00-07:10  near-silence               ambient          Silence                    -0.038
+   07:10-07:20  near-silence               ambient          Silence                    -0.035
+   07:20-07:30  near-silence               ambient          Silence                    -0.051
+   07:30-07:40  near-silence               ambient          Silence                    -0.034
+   07:40-07:50  near-silence               ambient          Silence                    -0.033
+   07:50-08:00  near-silence               ambient          Silence                    -0.033
+   08:00-08:10  near-silence               ambient          Silence                    -0.034
+   08:10-08:20  near-silence               ambient          Silence                    -0.032
+   08:20-08:30  near-silence               ambient          Silence                    -0.032
+   08:30-08:40  near-silence               ambient          Silence                    -0.035
+   08:40-08:50  near-silence               ambient          Silence                    -0.033
+   08:50-09:00  near-silence               ambient          Silence                    -0.035
+   09:00-09:10  near-silence               ambient          Silence                    -0.037
+   09:10-09:20  near-silence               ambient          Silence                    -0.033
+   09:20-09:30  near-silence               ambient          Silence                    -0.033
+   09:30-09:40  near-silence               ambient          Silence                    -0.032
+   09:40-09:50  near-silence               ambient          Silence                    -0.036
+   09:50-10:00  near-silence               ambient          Silence                    -0.036
+
+──────────────────────────────────────────────────────────────────────
+FILE: 6478.230725091251.wav
+  Unit: 6478  |  Recorded: 2023-07-25 09:12:51
+  Segments: 60
+
+          Time  Acoustic Label             PANNs Category   PANNs Top Sound              NDSI
+  ────────────  ─────────────────────────  ───────────────  ─────────────────────────  ──────
+   00:00-00:10  vessel noise               unknown          Speech                     -0.996
+   00:10-00:20  mixed soundscape           anthropogenic    Speech                     -0.997
+   00:20-00:30  mixed soundscape           anthropogenic    Speech                     -0.996
+   00:30-00:40  mixed soundscape           anthropogenic    Rowboat, canoe, kayak      -0.996
+   00:40-00:50  mixed soundscape           anthropogenic    Speech                     -0.990
+   00:50-01:00  near-silence               anthropogenic    Speech                     -0.986
+   01:00-01:10  mixed soundscape           anthropogenic    Speech                     -0.993
+   01:10-01:20  near-silence               anthropogenic    Speech                     -0.989
+   01:20-01:30  near-silence               anthropogenic    Rowboat, canoe, kayak      -0.978
+   01:30-01:40  near-silence               anthropogenic    Speech                     -0.982
+   01:40-01:50  near-silence               anthropogenic    Rowboat, canoe, kayak      -0.986
+   01:50-02:00  near-silence               anthropogenic    Rowboat, canoe, kayak      -0.969
+   02:00-02:10  near-silence               anthropogenic    Speech                     -0.988
+   02:10-02:20  near-silence               anthropogenic    Speech                     -0.987
+   02:20-02:30  near-silence               anthropogenic    Speech                     -0.984
+   02:30-02:40  mixed soundscape           anthropogenic    Speech                     -0.997
+   02:40-02:50  mixed soundscape           biological       Speech                     -0.993
+   02:50-03:00  near-silence               anthropogenic    Speech                     -0.988
+   03:00-03:10  near-silence               anthropogenic    Rowboat, canoe, kayak      -0.987
+   03:10-03:20  near-silence               anthropogenic    Rowboat, canoe, kayak      -0.975
+   03:20-03:30  near-silence               anthropogenic    Rowboat, canoe, kayak      -0.983
+   03:30-03:40  mixed soundscape           anthropogenic    Speech                     -0.993
+   03:40-03:50  near-silence               anthropogenic    Speech                     -0.967
+   03:50-04:00  near-silence               anthropogenic    Speech                     -0.987
+   04:00-04:10  near-silence               anthropogenic    Rowboat, canoe, kayak      -0.987
+   04:10-04:20  near-silence               anthropogenic    Speech                     -0.981
+   04:20-04:30  mixed soundscape           anthropogenic    Rowboat, canoe, kayak      -0.990
+   04:30-04:40  near-silence               anthropogenic    Speech                     -0.988
+   04:40-04:50  mixed soundscape           anthropogenic    Speech                     -0.996
+   04:50-05:00  mixed soundscape           anthropogenic    Speech                     -0.994
+   05:00-05:10  mixed soundscape           anthropogenic    Speech                     -0.994
+   05:10-05:20  mixed soundscape           anthropogenic    Speech                     -0.990
+   05:20-05:30  mixed soundscape           anthropogenic    Vehicle                    -1.000
+   05:30-05:40  mixed soundscape           anthropogenic    Vehicle                    -1.000
+   05:40-05:50  mixed soundscape           anthropogenic    Vehicle                    -1.000
+   05:50-06:00  mixed soundscape           anthropogenic    Vehicle                    -1.000
+   06:00-06:10  mixed soundscape           anthropogenic    Vehicle                    -1.000
+   06:10-06:20  mixed soundscape           anthropogenic    Vehicle                    -1.000
+   06:20-06:30  mixed soundscape           anthropogenic    Vehicle                    -1.000
+   06:30-06:40  vessel noise               anthropogenic    Vehicle                    -1.000
+   06:40-06:50  vessel noise               anthropogenic    Vehicle                    -1.000
+   06:50-07:00  vessel noise               anthropogenic    Vehicle                    -1.000
+   07:00-07:10  vessel noise               anthropogenic    Vehicle                    -1.000
+   07:10-07:20  vessel noise               anthropogenic    Vehicle                    -1.000
+   07:20-07:30  vessel noise               anthropogenic    Vehicle                    -1.000
+   07:30-07:40  vessel noise               anthropogenic    Vehicle                    -1.000
+   07:40-07:50  vessel noise               anthropogenic    Vehicle                    -1.000
+   07:50-08:00  vessel noise               biological       Heart sounds, heartbea     -1.000
+   08:00-08:10  vessel noise               anthropogenic    Rumble                     -1.000
+   08:10-08:20  vessel noise               anthropogenic    Rumble                     -1.000
+   08:20-08:30  vessel noise               anthropogenic    Speech                     -1.000
+   08:30-08:40  vessel noise               anthropogenic    Rumble                     -1.000
+   08:40-08:50  vessel noise               anthropogenic    Speech                     -1.000
+   08:50-09:00  vessel noise               anthropogenic    Vehicle                    -1.000
+   09:00-09:10  vessel noise               anthropogenic    Vehicle                    -1.000
+   09:10-09:20  vessel noise               anthropogenic    Vehicle                    -1.000
+   09:20-09:30  vessel noise               anthropogenic    Vehicle                    -1.000
+   09:30-09:40  vessel noise               anthropogenic    Vehicle                    -1.000
+   09:40-09:50  vessel noise               anthropogenic    Rumble                     -1.000
+   09:50-10:00  vessel noise               anthropogenic    Vehicle                    -1.000
+
+──────────────────────────────────────────────────────────────────────
+FILE: 6478.230726131251.wav
+  Unit: 6478  |  Recorded: 2023-07-26 13:12:51
+  Segments: 60
+
+          Time  Acoustic Label             PANNs Category   PANNs Top Sound              NDSI
+  ────────────  ─────────────────────────  ───────────────  ─────────────────────────  ──────
+   00:00-00:10  vessel noise               unknown          Speech                     -0.989
+   00:10-00:20  mixed soundscape           anthropogenic    Speech                     -1.000
+   00:20-00:30  mixed soundscape           ambient          Speech                     -1.000
+   00:30-00:40  mixed soundscape           biological       Speech                     -1.000
+   00:40-00:50  mixed soundscape           biological       Speech                     -1.000
+   00:50-01:00  mixed soundscape           biological       Speech                     -1.000
+   01:00-01:10  mixed soundscape           ambient          Speech                     -1.000
+   01:10-01:20  mixed soundscape           biological       Speech                     -1.000
+   01:20-01:30  mixed soundscape           ambient          Speech                     -1.000
+   01:30-01:40  mixed soundscape           ambient          Speech                     -1.000
+   01:40-01:50  mixed soundscape           unknown          Speech                     -1.000
+   01:50-02:00  mixed soundscape           ambient          Speech                     -1.000
+   02:00-02:10  mixed soundscape           ambient          Speech                     -1.000
+   02:10-02:20  mixed soundscape           unknown          Speech                     -1.000
+   02:20-02:30  mixed soundscape           ambient          Speech                     -1.000
+   02:30-02:40  mixed soundscape           ambient          Speech                     -1.000
+   02:40-02:50  mixed soundscape           anthropogenic    Speech                     -1.000
+   02:50-03:00  mixed soundscape           ambient          Speech                     -1.000
+   03:00-03:10  mixed soundscape           ambient          Silence                    -1.000
+   03:10-03:20  mixed soundscape           ambient          Speech                     -1.000
+   03:20-03:30  mixed soundscape           ambient          Speech                     -1.000
+   03:30-03:40  mixed soundscape           ambient          Speech                     -1.000
+   03:40-03:50  mixed soundscape           ambient          Speech                     -1.000
+   03:50-04:00  mixed soundscape           unknown          Speech                     -1.000
+   04:00-04:10  mixed soundscape           ambient          Speech                     -1.000
+   04:10-04:20  mixed soundscape           ambient          Speech                     -1.000
+   04:20-04:30  mixed soundscape           anthropogenic    Speech                     -1.000
+   04:30-04:40  mixed soundscape           unknown          Speech                     -1.000
+   04:40-04:50  mixed soundscape           ambient          Speech                     -1.000
+   04:50-05:00  mixed soundscape           ambient          Speech                     -1.000
+   05:00-05:10  mixed soundscape           ambient          Speech                     -1.000
+   05:10-05:20  vessel noise               ambient          Speech                     -1.000
+   05:20-05:30  vessel noise               ambient          Silence                    -1.000
+   05:30-05:40  mixed soundscape           ambient          Speech                     -1.000
+   05:40-05:50  mixed soundscape           ambient          Speech                     -1.000
+   05:50-06:00  mixed soundscape           biological       Speech                     -1.000
+   06:00-06:10  mixed soundscape           ambient          Silence                    -1.000
+   06:10-06:20  mixed soundscape           ambient          Speech                     -1.000
+   06:20-06:30  mixed soundscape           ambient          Speech                     -1.000
+   06:30-06:40  mixed soundscape           ambient          Silence                    -1.000
+   06:40-06:50  mixed soundscape           ambient          Speech                     -1.000
+   06:50-07:00  mixed soundscape           biological       Speech                     -1.000
+   07:00-07:10  mixed soundscape           ambient          Speech                     -1.000
+   07:10-07:20  mixed soundscape           ambient          Speech                     -1.000
+   07:20-07:30  mixed soundscape           ambient          Speech                     -1.000
+   07:30-07:40  mixed soundscape           anthropogenic    Speech                     -1.000
+   07:40-07:50  mixed soundscape           anthropogenic    Speech                     -1.000
+   07:50-08:00  mixed soundscape           unknown          Speech                     -1.000
+   08:00-08:10  mixed soundscape           biological       Speech                     -1.000
+   08:10-08:20  mixed soundscape           ambient          Speech                     -1.000
+   08:20-08:30  mixed soundscape           ambient          Speech                     -1.000
+   08:30-08:40  mixed soundscape           ambient          Silence                    -1.000
+   08:40-08:50  mixed soundscape           biological       Speech                     -1.000
+   08:50-09:00  mixed soundscape           ambient          Speech                     -1.000
+   09:00-09:10  mixed soundscape           ambient          Speech                     -1.000
+   09:10-09:20  mixed soundscape           ambient          Speech                     -1.000
+   09:20-09:30  mixed soundscape           ambient          Speech                     -1.000
+   09:30-09:40  mixed soundscape           ambient          Speech                     -1.000
+   09:40-09:50  mixed soundscape           ambient          Silence                    -1.000
+   09:50-10:00  mixed soundscape           ambient          Silence                    -1.000
+
+──────────────────────────────────────────────────────────────────────
+FILE: 190806_3761.wav
+  Unit: pilot  |  Recorded: 2019-08-06
+  Segments: 30
+
+          Time  Acoustic Label             PANNs Category   PANNs Top Sound              NDSI
+  ────────────  ─────────────────────────  ───────────────  ─────────────────────────  ──────
+   00:00-00:10  mixed soundscape           unknown          Silence                    -0.981
+   00:10-00:20  mixed soundscape           ambient          Silence                    -0.826
+   00:20-00:30  mixed soundscape           ambient          Silence                    -0.801
+   00:30-00:40  mixed soundscape           ambient          Silence                    -0.731
+   00:40-00:50  mixed soundscape           ambient          Silence                    -0.804
+   00:50-01:00  mixed soundscape           ambient          Silence                    -0.806
+   01:00-01:10  mixed soundscape           ambient          Silence                    -0.854
+   01:10-01:20  mixed soundscape           ambient          Silence                    -0.852
+   01:20-01:30  mixed soundscape           unknown          Silence                    -0.958
+   01:30-01:40  mixed soundscape           ambient          Silence                    -0.899
+   01:40-01:50  mixed soundscape           ambient          Silence                    -0.830
+   01:50-02:00  mixed soundscape           ambient          Silence                    -0.786
+   02:00-02:10  mixed soundscape           unknown          Silence                    -0.878
+   02:10-02:20  mixed soundscape           unknown          Drawer open or close       -0.979
+   02:20-02:30  mixed soundscape           biological       Sliding door               -0.992
+   02:30-02:40  mixed soundscape           biological       Silence                    -0.964
+   02:40-02:50  mixed soundscape           ambient          Silence                    -0.793
+   02:50-03:00  mixed soundscape           ambient          Silence                    -0.829
+   03:00-03:10  mixed soundscape           ambient          Silence                    -0.790
+   03:10-03:20  mixed soundscape           ambient          Silence                    -0.785
+   03:20-03:30  mixed soundscape           unknown          Silence                    -0.927
+   03:30-03:40  mixed soundscape           unknown          Silence                    -0.942
+   03:40-03:50  mixed soundscape           biological       Animal                     -0.979
+   03:50-04:00  mixed soundscape           unknown          Silence                    -0.943
+   04:00-04:10  mixed soundscape           ambient          Silence                    -0.742
+   04:10-04:20  mixed soundscape           ambient          Silence                    -0.778
+   04:20-04:30  mixed soundscape           ambient          Silence                    -0.765
+   04:30-04:40  mixed soundscape           ambient          Silence                    -0.765
+   04:40-04:50  mixed soundscape           ambient          Silence                    -0.778
+   04:50-05:00  mixed soundscape           ambient          White noise                -0.718
+
+──────────────────────────────────────────────────────────────────────
+FILE: 190807_3941.wav
+  Unit: pilot  |  Recorded: 2019-08-07
+  Segments: 30
+
+          Time  Acoustic Label             PANNs Category   PANNs Top Sound              NDSI
+  ────────────  ─────────────────────────  ───────────────  ─────────────────────────  ──────
+   00:00-00:10  moderate biological        ambient          Raindrop                   -0.951
+   00:10-00:20  moderate biological        biological       Rain                       -0.980
+   00:20-00:30  moderate biological        biological       Rain                       -0.976
+   00:30-00:40  moderate biological        ambient          Rain                       -0.979
+   00:40-00:50  moderate biological        unknown          Sizzle                     -0.966
+   00:50-01:00  vessel noise               ambient          Rain                       -0.987
+   01:00-01:10  moderate biological        ambient          Rain                       -0.969
+   01:10-01:20  moderate biological        biological       Raindrop                   -0.955
+   01:20-01:30  vessel noise               anthropogenic    Rain                       -0.994
+   01:30-01:40  vessel noise               anthropogenic    Rain                       -0.992
+   01:40-01:50  moderate biological        biological       Animal                     -0.956
+   01:50-02:00  moderate biological        biological       Clip-clop                  -0.961
+   02:00-02:10  moderate biological        biological       Raindrop                   -0.952
+   02:10-02:20  moderate biological        unknown          Frying (food)              -0.943
+   02:20-02:30  moderate biological        unknown          Frying (food)              -0.945
+   02:30-02:40  moderate biological        unknown          Frying (food)              -0.941
+   02:40-02:50  moderate biological        unknown          Rain                       -0.945
+   02:50-03:00  moderate biological        unknown          Frying (food)              -0.948
+   03:00-03:10  moderate biological        biological       Frying (food)              -0.947
+   03:10-03:20  moderate biological        unknown          Frying (food)              -0.947
+   03:20-03:30  moderate biological        unknown          Frying (food)              -0.962
+   03:30-03:40  moderate biological        biological       Boiling                    -0.969
+   03:40-03:50  moderate biological        biological       Sizzle                     -0.959
+   03:50-04:00  vessel noise               anthropogenic    Vehicle                    -0.998
+   04:00-04:10  vessel noise               anthropogenic    Rain                       -0.993
+   04:10-04:20  moderate biological        biological       Animal                     -0.961
+   04:20-04:30  moderate biological        biological       Rain                       -0.948
+   04:30-04:40  moderate biological        biological       Frying (food)              -0.953
+   04:40-04:50  moderate biological        biological       Sizzle                     -0.949
+   04:50-05:00  moderate biological        biological       Raindrop                   -0.951
+
+──────────────────────────────────────────────────────────────────────
+FILE: 190808_4229.wav
+  Unit: pilot  |  Recorded: 2019-08-08
+  Segments: 30
+
+          Time  Acoustic Label             PANNs Category   PANNs Top Sound              NDSI
+  ────────────  ─────────────────────────  ───────────────  ─────────────────────────  ──────
+   00:00-00:10  vessel noise               anthropogenic    Vehicle                    -0.988
+   00:10-00:20  moderate biological        ambient          Thunder                    -0.980
+   00:20-00:30  moderate biological        biological       Animal                     -0.964
+   00:30-00:40  moderate biological        biological       Rain                       -0.971
+   00:40-00:50  moderate biological        ambient          Rain                       -0.976
+   00:50-01:00  mixed soundscape           biological       Rain                       -0.951
+   01:00-01:10  moderate biological        ambient          Rain                       -0.987
+   01:10-01:20  mixed soundscape           unknown          Patter                     -0.944
+   01:20-01:30  moderate biological        biological       Patter                     -0.957
+   01:30-01:40  moderate biological        biological       Rain                       -0.967
+   01:40-01:50  mixed soundscape           biological       Raindrop                   -0.914
+   01:50-02:00  moderate biological        biological       Rain                       -0.967
+   02:00-02:10  moderate biological        biological       Rain                       -0.974
+   02:10-02:20  mixed soundscape           biological       Patter                     -0.945
+   02:20-02:30  moderate biological        ambient          Rain                       -0.987
+   02:30-02:40  mixed soundscape           biological       Rain                       -0.936
+   02:40-02:50  moderate biological        ambient          Rain                       -0.984
+   02:50-03:00  mixed soundscape           biological       Rain                       -0.951
+   03:00-03:10  mixed soundscape           biological       Rain                       -0.947
+   03:10-03:20  mixed soundscape           biological       Rain                       -0.933
+   03:20-03:30  moderate biological        biological       Rain                       -0.981
+   03:30-03:40  moderate biological        ambient          Rain                       -0.982
+   03:40-03:50  moderate biological        biological       Rain                       -0.992
+   03:50-04:00  mixed soundscape           biological       Rain                       -0.942
+   04:00-04:10  mixed soundscape           biological       Rain                       -0.940
+   04:10-04:20  moderate biological        ambient          Rain                       -0.980
+   04:20-04:30  mixed soundscape           biological       Patter                     -0.906
+   04:30-04:40  moderate biological        biological       Rain                       -0.986
+   04:40-04:50  mixed soundscape           ambient          Rain                       -0.908
+   04:50-05:00  moderate biological        biological       Rain                       -0.990
+
+──────────────────────────────────────────────────────────────────────
+FILE: 201010_5885.wav
+  Unit: pilot  |  Recorded: 2020-10-10
+  Segments: 30
+
+          Time  Acoustic Label             PANNs Category   PANNs Top Sound              NDSI
+  ────────────  ─────────────────────────  ───────────────  ─────────────────────────  ──────
+   00:00-00:10  mixed soundscape           unknown          Frying (food)              -0.449
+   00:10-00:20  mixed soundscape           unknown          Frying (food)              -0.406
+   00:20-00:30  biological (shrimp/reef/fish)  unknown          Frying (food)              -0.019
+   00:30-00:40  biological (shrimp/reef/fish)  unknown          Frying (food)               0.270
+   00:40-00:50  biological (shrimp/reef/fish)  unknown          Frying (food)              -0.087
+   00:50-01:00  mixed soundscape           ambient          Water                      -0.721
+   01:00-01:10  mixed soundscape           anthropogenic    Engine                     -0.871
+   01:10-01:20  mixed soundscape           unknown          Frying (food)              -0.233
+   01:20-01:30  mixed soundscape           unknown          Frying (food)              -0.332
+   01:30-01:40  mixed soundscape           unknown          Frying (food)              -0.353
+   01:40-01:50  mixed soundscape           unknown          Frying (food)              -0.286
+   01:50-02:00  biological (shrimp/reef/fish)  unknown          Frying (food)              -0.179
+   02:00-02:10  biological (shrimp/reef/fish)  unknown          Frying (food)               0.126
+   02:10-02:20  biological (shrimp/reef/fish)  unknown          Frying (food)               0.226
+   02:20-02:30  strong biological (reef/shrimp)  unknown          Frying (food)               0.555
+   02:30-02:40  biological (shrimp/reef/fish)  unknown          Frying (food)               0.092
+   02:40-02:50  strong biological (reef/shrimp)  unknown          Frying (food)               0.325
+   02:50-03:00  mixed soundscape           unknown          Frying (food)              -0.918
+   03:00-03:10  strong biological (reef/shrimp)  unknown          Frying (food)               0.581
+   03:10-03:20  strong biological (reef/shrimp)  unknown          Frying (food)               0.707
+   03:20-03:30  strong biological (reef/shrimp)  unknown          Frying (food)               0.702
+   03:30-03:40  strong biological (reef/shrimp)  unknown          Frying (food)               0.416
+   03:40-03:50  strong biological (reef/shrimp)  unknown          Frying (food)               0.767
+   03:50-04:00  strong biological (reef/shrimp)  unknown          Frying (food)               0.699
+   04:00-04:10  strong biological (reef/shrimp)  unknown          Frying (food)               0.751
+   04:10-04:20  strong biological (reef/shrimp)  unknown          Frying (food)               0.802
+   04:20-04:30  strong biological (reef/shrimp)  unknown          Frying (food)               0.527
+   04:30-04:40  strong biological (reef/shrimp)  unknown          Frying (food)               0.551
+   04:40-04:50  strong biological (reef/shrimp)  unknown          Frying (food)               0.472
+   04:50-05:00  strong biological (reef/shrimp)  unknown          Frying (food)               0.433
+
+──────────────────────────────────────────────────────────────────────
+FILE: 201010_5899.wav
+  Unit: pilot  |  Recorded: 2020-10-10
+  Segments: 30
+
+          Time  Acoustic Label             PANNs Category   PANNs Top Sound              NDSI
+  ────────────  ─────────────────────────  ───────────────  ─────────────────────────  ──────
+   00:00-00:10  strong biological (reef/shrimp)  unknown          Frying (food)               0.743
+   00:10-00:20  strong biological (reef/shrimp)  unknown          Frying (food)               0.752
+   00:20-00:30  strong biological (reef/shrimp)  unknown          Frying (food)               0.754
+   00:30-00:40  strong biological (reef/shrimp)  unknown          Frying (food)               0.744
+   00:40-00:50  strong biological (reef/shrimp)  unknown          Frying (food)               0.729
+   00:50-01:00  strong biological (reef/shrimp)  unknown          Frying (food)               0.749
+   01:00-01:10  strong biological (reef/shrimp)  unknown          Frying (food)               0.759
+   01:10-01:20  strong biological (reef/shrimp)  unknown          Frying (food)               0.719
+   01:20-01:30  strong biological (reef/shrimp)  unknown          Frying (food)               0.683
+   01:30-01:40  strong biological (reef/shrimp)  unknown          Frying (food)               0.719
+   01:40-01:50  strong biological (reef/shrimp)  unknown          Frying (food)               0.737
+   01:50-02:00  strong biological (reef/shrimp)  unknown          Frying (food)               0.712
+   02:00-02:10  strong biological (reef/shrimp)  unknown          Frying (food)               0.771
+   02:10-02:20  strong biological (reef/shrimp)  unknown          Frying (food)               0.725
+   02:20-02:30  strong biological (reef/shrimp)  unknown          Frying (food)               0.733
+   02:30-02:40  strong biological (reef/shrimp)  unknown          Frying (food)               0.676
+   02:40-02:50  strong biological (reef/shrimp)  unknown          Frying (food)               0.694
+   02:50-03:00  strong biological (reef/shrimp)  unknown          Frying (food)               0.723
+   03:00-03:10  strong biological (reef/shrimp)  unknown          Frying (food)               0.654
+   03:10-03:20  strong biological (reef/shrimp)  unknown          Frying (food)               0.654
+   03:20-03:30  strong biological (reef/shrimp)  unknown          Frying (food)               0.737
+   03:30-03:40  strong biological (reef/shrimp)  unknown          Frying (food)               0.715
+   03:40-03:50  strong biological (reef/shrimp)  unknown          Frying (food)               0.521
+   03:50-04:00  strong biological (reef/shrimp)  unknown          Frying (food)               0.648
+   04:00-04:10  strong biological (reef/shrimp)  unknown          Frying (food)               0.606
+   04:10-04:20  strong biological (reef/shrimp)  unknown          Frying (food)               0.537
+   04:20-04:30  strong biological (reef/shrimp)  unknown          Frying (food)               0.345
+   04:30-04:40  biological (shrimp/reef/fish)  ambient          Frying (food)              -0.009
+   04:40-04:50  mixed soundscape           anthropogenic    Water                      -0.367
+   04:50-05:00  mixed soundscape           unknown          Ratchet, pawl              -0.620
